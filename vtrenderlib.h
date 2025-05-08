@@ -1,0 +1,16 @@
+#pragma once
+
+struct vtr_canvas;
+
+struct vtr_canvas* vtr_canvas_create(int ttyfd);
+int vtr_reset(struct vtr_canvas* vt);
+void vtr_close(struct vtr_canvas* vt);
+
+uint16_t vtr_xdots(struct vtr_canvas* vt);
+uint16_t vtr_ydots(struct vtr_canvas* vt);
+
+void vtr_render_dot(struct vtr_canvas* vt, uint16_t x, uint16_t y);
+void vtr_scan_line(struct vtr_canvas* vt, uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1);
+
+int vtr_clear_screen(struct vtr_canvas* vt);
+int vtr_swap_buffers(struct vtr_canvas* vt);
