@@ -116,6 +116,13 @@
 #define VT_CELL_YDOTS ((uint16_t)4)
 #define VT_CELL_XDOTS ((uint16_t)2)
 
+struct vtr_stencil_buf
+{
+    uint16_t ydots;
+    uint16_t xdots;
+    uint8_t* buffer;
+};
+
 struct vtr_canvas
 {
     int fd;
@@ -126,19 +133,40 @@ struct vtr_canvas
     uint16_t nrows;
     uint16_t ncols;
 
-    // Canvas dimentions in dots
+    // Canvas dimensions in dots
     uint16_t ydots;
     uint16_t xdots;
 
     // Double-buffered stencil
-    uint8_t* buffer;
-    uint8_t* alt_buffer;
-    uint8_t* cur_buffer;
+    struct vtr_stencil_buf sb[2];
+    struct vtr_stencil_buf* cur_sb;
 
     // Escape sequence list buffer
     char* seqlist;
     size_t seqcap;
 };
+
+static int create_stencil_buf(struct vtr_stencil_buf* sb, uint16_t rows, uint16_t cols)
+{
+    sb->buffer = calloc(rows, cols);
+    if (!sb->buffer) {
+        return -1;
+    }
+
+    sb->xdots = cols * VT_CELL_XDOTS;
+    sb->ydots = rows * VT_CELL_YDOTS;
+
+    return 0;
+}
+
+static void free_stencil_buf(struct vtr_stencil_buf* sb)
+{
+    if (sb) {
+        free(sb->buffer);
+        sb->ydots = sb->xdots = 0;
+        sb->buffer = NULL;
+    }
+}
 
 struct vtr_canvas* vtr_canvas_create(int ttyfd)
 {
@@ -161,20 +189,20 @@ struct vtr_canvas* vtr_canvas_create(int ttyfd)
         return NULL;
     }
 
-    uint8_t* buffer = calloc(ws.ws_row, ws.ws_col);
-    uint8_t* alt_buffer = calloc(ws.ws_row, ws.ws_col);
+    struct vtr_stencil_buf sb1 = {0};
+    struct vtr_stencil_buf sb2 = {0};
+    char* seqlist = NULL;
+
+    if (0 != create_stencil_buf(&sb1, ws.ws_row, ws.ws_col) || 0 != create_stencil_buf(&sb2, ws.ws_row, ws.ws_col)) {
+        goto error_out;
+    }
 
     // We preallocate enough space to hold the biggest number of draw calls (3 bytes per escape seq)
     // plus some slack to hold a cursor reset command (6 bytes) and some change.
     size_t seqcap = (size_t)ws.ws_row * (ws.ws_col + 1);
-    char* seqlist = malloc(seqcap);
-
-    if (!buffer || !alt_buffer || !seqlist) {
-        free(vt);
-        free(buffer);
-        free(alt_buffer);
-        free(seqlist);
-        return NULL;
+    seqlist = malloc(seqcap);
+    if (!seqlist) {
+        goto error_out;
     }
 
     vt->fd = ttyfd;
@@ -182,15 +210,24 @@ struct vtr_canvas* vtr_canvas_create(int ttyfd)
     vt->ncols = ws.ws_col;
     vt->ydots = ws.ws_row * VT_CELL_YDOTS;
     vt->xdots = ws.ws_col * VT_CELL_XDOTS;
-    vt->buffer = buffer;
-    vt->alt_buffer = alt_buffer;
-    vt->cur_buffer = buffer;
+    vt->sb[0] = sb1;
+    vt->sb[1] = sb2;
+    vt->cur_sb = &vt->sb[0];
     vt->seqlist = seqlist;
     vt->seqcap = seqcap;
     vt->resize_pending = false;
     memcpy(&vt->origattrs, &attrs, sizeof(attrs));
 
     return vt;
+
+error_out:
+
+    free_stencil_buf(&sb1);
+    free_stencil_buf(&sb2);
+    free(seqlist);
+    free(vt);
+
+    return NULL;
 }
 
 static int sendseq(int ttyfd, const char* seq, size_t nbytes)
@@ -243,34 +280,33 @@ int vtr_resize(struct vtr_canvas* vt)
         return error;
     }
 
-    DBG_LOG("resizing vt canvas\n");
+    struct vtr_stencil_buf sb1 = {0};
+    struct vtr_stencil_buf sb2 = {0};
+    char* seqlist = NULL;
 
-    uint8_t* buffer = calloc(ws.ws_row, ws.ws_col);
-    uint8_t* alt_buffer = calloc(ws.ws_row, ws.ws_col);
+    if (0 != create_stencil_buf(&sb1, ws.ws_row, ws.ws_col) || 0 != create_stencil_buf(&sb2, ws.ws_row, ws.ws_col)) {
+        goto error_out;
+    }
 
     size_t seqcap = (size_t)ws.ws_row * (ws.ws_col + 1);
-    char* seqlist = malloc(seqcap);
-
-    if (!buffer || !alt_buffer || !seqlist) {
-        free(buffer);
-        free(alt_buffer);
-        free(seqlist);
-        return -1;
+    seqlist = malloc(seqcap);
+    if (!seqlist) {
+        goto error_out;
     }
 
     // No use keeping the previous buffer contents since those
     // are invalid in the new dimentions anyway.
-    free(vt->buffer);
-    free(vt->alt_buffer);
+    free_stencil_buf(&vt->sb[0]);
+    free_stencil_buf(&vt->sb[1]);
     free(vt->seqlist);
 
     vt->nrows = ws.ws_row;
     vt->ncols = ws.ws_col;
     vt->ydots = ws.ws_row * VT_CELL_YDOTS;
     vt->xdots = ws.ws_col * VT_CELL_XDOTS;
-    vt->buffer = buffer;
-    vt->alt_buffer = alt_buffer;
-    vt->cur_buffer = buffer;
+    vt->sb[0] = sb1;
+    vt->sb[1] = sb2;
+    vt->cur_sb = &vt->sb[0];
     vt->seqlist = seqlist;
     vt->seqcap = seqcap;
     vt->resize_pending = false;
@@ -278,6 +314,14 @@ int vtr_resize(struct vtr_canvas* vt)
     vtr_clear_screen(vt);
 
     return 0;
+
+error_out:
+
+    free_stencil_buf(&sb1);
+    free_stencil_buf(&sb2);
+    free(seqlist);
+
+    return -1;
 }
 
 void vtr_set_resize_pending(struct vtr_canvas* vt)
@@ -303,8 +347,8 @@ uint16_t vtr_ydots(struct vtr_canvas* vt)
 void vtr_close(struct vtr_canvas* vt)
 {
     tcsetattr(vt->fd, TCSANOW, &vt->origattrs);
-    free(vt->buffer);
-    free(vt->alt_buffer);
+    free_stencil_buf(&vt->sb[0]);
+    free_stencil_buf(&vt->sb[1]);
     free(vt->seqlist);
 
     // switch back to main buffer and restore cursor
@@ -319,16 +363,24 @@ int vtr_clear_screen(struct vtr_canvas* vt)
     return sendseq(vt->fd, "\x1B[2J", 4);
 }
 
+void render_dot(struct vtr_stencil_buf* sb, uint16_t x, uint16_t y)
+{
+    assert(x < sb->xdots && y < sb->ydots);
+
+    uint16_t row = y / VT_CELL_YDOTS;
+    uint16_t col = x / VT_CELL_XDOTS;
+    uint16_t ncols = sb->xdots / VT_CELL_XDOTS;
+    uint16_t stencil = (1u << (y & (VT_CELL_YDOTS - 1))) << ((x & (VT_CELL_XDOTS - 1)) * 4);
+    sb->buffer[row * ncols + col] |= stencil;
+}
+
 void vtr_render_dot(struct vtr_canvas* vt, uint16_t x, uint16_t y)
 {
     if (x >= vt->xdots || y >= vt->ydots) {
         return;
     }
 
-    uint16_t row = y / VT_CELL_YDOTS;
-    uint16_t col = x / VT_CELL_XDOTS;
-    uint16_t stencil = (1u << (y & (VT_CELL_YDOTS - 1))) << ((x & (VT_CELL_XDOTS - 1)) * 4);
-    vt->cur_buffer[row * vt->ncols + col] |= stencil;
+    render_dot(vt->cur_sb, x, y);
 }
 
 static char* extend_seq_buf(struct vtr_canvas* vt)
@@ -378,8 +430,8 @@ static uint8_t draw_current_cell_s(char* seq, size_t seqcap, uint8_t mask)
 
 int vtr_swap_buffers(struct vtr_canvas* vt)
 {
-    uint8_t* cur_buffer = vt->cur_buffer;
-    uint8_t* prev_buffer = (vt->cur_buffer == vt->buffer ? vt->alt_buffer : vt->buffer);
+    struct vtr_stencil_buf* cur_sb = vt->cur_sb;
+    struct vtr_stencil_buf* prev_sb = (vt->cur_sb == &vt->sb[0] ? &vt->sb[1] : &vt->sb[0]);
     size_t seqlen = 0;
     size_t cmdlen = 0;
     size_t cell_idx = 0;
@@ -387,7 +439,7 @@ int vtr_swap_buffers(struct vtr_canvas* vt)
 
     for (uint16_t row = 1; row <= vt->nrows; row++) {
         for (uint16_t col = 1; col <= vt->ncols; col++, cell_idx++) {
-            if (cur_buffer[cell_idx] == prev_buffer[cell_idx]) {
+            if (cur_sb->buffer[cell_idx] == prev_sb->buffer[cell_idx]) {
                 skip_cell = true;
                 continue;
             }
@@ -416,7 +468,7 @@ int vtr_swap_buffers(struct vtr_canvas* vt)
             // | 7 | 8 |
             // +---+---+
 
-            uint8_t stencil = cur_buffer[cell_idx];
+            uint8_t stencil = cur_sb->buffer[cell_idx];
             uint8_t bcell = (stencil & 0x7) | (stencil & 0x8) << 3 | (stencil & 0x70) >> 1 | (stencil & 0x80);
 
             do {
@@ -436,8 +488,8 @@ int vtr_swap_buffers(struct vtr_canvas* vt)
         return -1;
     }
 
-    vt->cur_buffer = prev_buffer;
-    memset(vt->cur_buffer, 0, vt->nrows * vt->ncols);
+    vt->cur_sb = prev_sb;
+    memset(vt->cur_sb->buffer, 0, vt->nrows * vt->ncols);
 
     return 0;
 }
@@ -460,10 +512,7 @@ static uint16_t round_to_nearest(float f)
     return (uint16_t)(f + 0.5f);
 }
 
-/**
- * Scan a line segment described by 2 dot coordinates.
- */
-void vtr_scan_line(struct vtr_canvas* vt, uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1)
+void scan_line(struct vtr_stencil_buf* sb, uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1)
 {
     float m = calc_slope(x0, y0, x1, y1);
     int hdir = (x0 < x1 ? 1 : -1);
@@ -472,19 +521,19 @@ void vtr_scan_line(struct vtr_canvas* vt, uint16_t x0, uint16_t y0, uint16_t x1,
     if (m == 0.0) {
         do
         {
-            vtr_render_dot(vt, x0, y0);
+            render_dot(sb, x0, y0);
             x0 += hdir;
         } while (x0 != x1 + hdir);
     } else if (m == INFINITY) {
         do
         {
-            vtr_render_dot(vt, x0, y0);
+            render_dot(sb, x0, y0);
             y0 += vdir;
         } while (y0 != y1 + vdir);
     } else if (m == -1.0 || m == 1.0) {
         do
         {
-            vtr_render_dot(vt, x0, y0);
+            render_dot(sb, x0, y0);
             x0 += hdir;
             y0 += vdir;
         } while (x0 != x1 + hdir);
@@ -504,7 +553,7 @@ void vtr_scan_line(struct vtr_canvas* vt, uint16_t x0, uint16_t y0, uint16_t x1,
 
         do
         {
-            vtr_render_dot(vt, x0, y0);
+            render_dot(sb, x0, y0);
 
             if (m > -1.0 && m < 1.0) {
                 x0 += hdir;
@@ -512,7 +561,7 @@ void vtr_scan_line(struct vtr_canvas* vt, uint16_t x0, uint16_t y0, uint16_t x1,
                 y0 = round_to_nearest(y); // 0.5 will round up
 
                 if (y - y0 == -0.5) {
-                    vtr_render_dot(vt, x0, y0 - 1);
+                    render_dot(sb, x0, y0 - 1);
                 }
             } else {
                 y0 += vdir;
@@ -520,9 +569,14 @@ void vtr_scan_line(struct vtr_canvas* vt, uint16_t x0, uint16_t y0, uint16_t x1,
                 x0 = round_to_nearest(x); // 0.5 will round up
 
                 if (x - x0 == -0.5) {
-                    vtr_render_dot(vt, x0 - 1, y0);
+                    render_dot(sb, x0 - 1, y0);
                 }
             }
         } while (x0 != x1 + hdir && y0 != y1 + vdir);
     }
+}
+
+void vtr_scan_line(struct vtr_canvas* vt, uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1)
+{
+    scan_line(vt->cur_sb, x0, y0, x1, y1);
 }
