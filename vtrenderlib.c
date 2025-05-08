@@ -120,6 +120,7 @@ struct vtr_canvas
 {
     int fd;
     struct termios origattrs;
+    bool resize_pending;
 
     // Canvas dimentions in char cells
     uint16_t nrows;
@@ -186,6 +187,7 @@ struct vtr_canvas* vtr_canvas_create(int ttyfd)
     vt->cur_buffer = buffer;
     vt->seqlist = seqlist;
     vt->seqcap = seqcap;
+    vt->resize_pending = false;
     memcpy(&vt->origattrs, &attrs, sizeof(attrs));
 
     return vt;
@@ -226,6 +228,66 @@ int vtr_reset(struct vtr_canvas* vt)
     error |= sendseq(vt->fd, "\x1B[2J", 4);
 
     return error;
+}
+
+int vtr_resize(struct vtr_canvas* vt)
+{
+    if (!vt->resize_pending) {
+        return 0;
+    }
+
+    int error;
+    struct winsize ws;
+    error = ioctl(vt->fd, TIOCGWINSZ, &ws);
+    if (error) {
+        return error;
+    }
+
+    DBG_LOG("resizing vt canvas\n");
+
+    uint8_t* buffer = calloc(ws.ws_row, ws.ws_col);
+    uint8_t* alt_buffer = calloc(ws.ws_row, ws.ws_col);
+
+    size_t seqcap = (size_t)ws.ws_row * (ws.ws_col + 1);
+    char* seqlist = malloc(seqcap);
+
+    if (!buffer || !alt_buffer || !seqlist) {
+        free(buffer);
+        free(alt_buffer);
+        free(seqlist);
+        return -1;
+    }
+
+    // No use keeping the previous buffer contents since those
+    // are invalid in the new dimentions anyway.
+    free(vt->buffer);
+    free(vt->alt_buffer);
+    free(vt->seqlist);
+
+    vt->nrows = ws.ws_row;
+    vt->ncols = ws.ws_col;
+    vt->ydots = ws.ws_row * VT_CELL_YDOTS;
+    vt->xdots = ws.ws_col * VT_CELL_XDOTS;
+    vt->buffer = buffer;
+    vt->alt_buffer = alt_buffer;
+    vt->cur_buffer = buffer;
+    vt->seqlist = seqlist;
+    vt->seqcap = seqcap;
+    vt->resize_pending = false;
+
+    vtr_clear_screen(vt);
+
+    return 0;
+}
+
+void vtr_set_resize_pending(struct vtr_canvas* vt)
+{
+    vt->resize_pending = true;
+}
+
+bool vtr_is_resize_pending(const struct vtr_canvas* vt)
+{
+    return vt->resize_pending;
 }
 
 uint16_t vtr_xdots(struct vtr_canvas* vt)

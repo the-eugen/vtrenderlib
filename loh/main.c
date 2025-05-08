@@ -15,9 +15,13 @@ static void restore_tty_attrs(void)
 
 static void handle_signal(int signo)
 {
-    restore_tty_attrs();
-    signal(signo, SIG_DFL);
-    raise(signo);
+    if (signo == SIGWINCH) {
+        vtr_set_resize_pending(g_vt);
+    } else {
+        restore_tty_attrs();
+        signal(signo, SIG_DFL);
+        raise(signo);
+    }
 }
 
 int main(void)
@@ -31,6 +35,7 @@ int main(void)
 
     atexit(restore_tty_attrs);
     signal(SIGINT, handle_signal);
+    signal(SIGWINCH, handle_signal);
 
     error = vtr_reset(g_vt);
     if (error) {
@@ -42,6 +47,8 @@ int main(void)
     int xdir = 1, ydir = 1;
 
     while(true) {
+        vtr_resize(g_vt);
+
         vtr_scan_line(g_vt, x + margin, y + hbox - margin, x + charw / 2, y + margin);
         vtr_scan_line(g_vt, x + charw / 2, y + margin, x + charw - margin, y + hbox - margin);
 
