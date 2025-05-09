@@ -141,6 +141,9 @@ struct vtr_canvas
     struct vtr_stencil_buf sb[2];
     struct vtr_stencil_buf* cur_sb;
 
+    // Bitmap buffer to cover xdots number of bit. Used for line scanning.
+    uint8_t* linemap;
+
     // Escape sequence list buffer
     char* seqlist;
     size_t seqcap;
@@ -192,8 +195,14 @@ struct vtr_canvas* vtr_canvas_create(int ttyfd)
     struct vtr_stencil_buf sb1 = {0};
     struct vtr_stencil_buf sb2 = {0};
     char* seqlist = NULL;
+    uint8_t* linemap = NULL;
 
     if (0 != create_stencil_buf(&sb1, ws.ws_row, ws.ws_col) || 0 != create_stencil_buf(&sb2, ws.ws_row, ws.ws_col)) {
+        goto error_out;
+    }
+
+    linemap = malloc((ws.ws_col * VT_CELL_XDOTS + 7) >> 3);
+    if (!linemap) {
         goto error_out;
     }
 
@@ -213,6 +222,7 @@ struct vtr_canvas* vtr_canvas_create(int ttyfd)
     vt->sb[0] = sb1;
     vt->sb[1] = sb2;
     vt->cur_sb = &vt->sb[0];
+    vt->linemap = linemap;
     vt->seqlist = seqlist;
     vt->seqcap = seqcap;
     vt->resize_pending = false;
@@ -225,6 +235,7 @@ error_out:
     free_stencil_buf(&sb1);
     free_stencil_buf(&sb2);
     free(seqlist);
+    free(linemap);
     free(vt);
 
     return NULL;
@@ -283,8 +294,14 @@ int vtr_resize(struct vtr_canvas* vt)
     struct vtr_stencil_buf sb1 = {0};
     struct vtr_stencil_buf sb2 = {0};
     char* seqlist = NULL;
+    uint8_t* linemap = NULL;
 
     if (0 != create_stencil_buf(&sb1, ws.ws_row, ws.ws_col) || 0 != create_stencil_buf(&sb2, ws.ws_row, ws.ws_col)) {
+        goto error_out;
+    }
+
+    linemap = malloc((ws.ws_col * VT_CELL_XDOTS + 7) >> 3);
+    if (!linemap) {
         goto error_out;
     }
 
@@ -307,6 +324,7 @@ int vtr_resize(struct vtr_canvas* vt)
     vt->sb[0] = sb1;
     vt->sb[1] = sb2;
     vt->cur_sb = &vt->sb[0];
+    vt->linemap = linemap;
     vt->seqlist = seqlist;
     vt->seqcap = seqcap;
     vt->resize_pending = false;
@@ -319,6 +337,7 @@ error_out:
 
     free_stencil_buf(&sb1);
     free_stencil_buf(&sb2);
+    free(linemap);
     free(seqlist);
 
     return -1;
@@ -579,4 +598,90 @@ void scan_line(struct vtr_stencil_buf* sb, uint16_t x0, uint16_t y0, uint16_t x1
 void vtr_scan_line(struct vtr_canvas* vt, uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1)
 {
     scan_line(vt->cur_sb, x0, y0, x1, y1);
+}
+
+static void scan_line_map(struct vtr_stencil_buf* sb, const uint8_t* linemap, uint16_t y)
+{
+    bool in_region = false;
+
+    for (uint16_t x = 0; x < sb->xdots; x++) {
+        bool bit = !!(linemap[x >> 3] & (1u << (x & 0x7)));
+        if (!in_region && bit) {
+            in_region = true;
+        } else if (in_region && bit) {
+            in_region = false;
+        }
+
+        if (in_region || bit) {
+            render_dot(sb, x, y);
+        }
+    }
+}
+
+int vtr_trace_poly(struct vtr_canvas* vt, size_t nvertices, const struct vtr_vertex* vertexlist)
+{
+    assert(vt);
+    assert(vertexlist);
+
+    if (nvertices == 0) {
+        return 0;
+    }
+
+    if (nvertices == 1) {
+        render_dot(vt->cur_sb, vertexlist[0].x, vertexlist[0].y);
+        return 0;
+    }
+
+    if (nvertices == 2) {
+        scan_line(vt->cur_sb, vertexlist[0].x, vertexlist[0].y, vertexlist[1].x, vertexlist[1].y);
+        return 0;
+    }
+
+    assert(nvertices >= 3);
+
+    uint16_t ymax = 0, ymin = UINT16_MAX;
+    for (size_t i = 0; i < nvertices; i++) {
+        // TODO: should we cull out of bounds vertices instead of failing?
+        if (vertexlist[i].x >= vt->xdots || vertexlist[i].y >= vt->ydots) {
+            return -1;
+        }
+
+        ymin = MIN(ymin, vertexlist[i].y);
+        ymax = MAX(ymax, vertexlist[i].y);
+    }
+
+    for (uint16_t y = ymin; y != ymax + 1; y++) {
+        size_t ncepts = 0;
+        memset(vt->linemap, 0, (vt->xdots + 7) >> 3);
+        for (size_t i = 0; i < nvertices; i++) {
+            struct vtr_vertex a = vertexlist[i];
+            struct vtr_vertex b = (i + 1 == nvertices ? vertexlist[0] : vertexlist[i + 1]);
+
+            if (y == a.y && y == b.y) {
+                scan_line(vt->cur_sb, a.x, a.y, b.x, b.y);
+            } else if ((y == a.y || y == b.y) && (y == ymin || y == ymax)) {
+                render_dot(vt->cur_sb, (y == a.y ? a.x : b.x), y);
+            } else if ((y >= a.y && y <= b.y) || (y >= b.y && y <= a.y)) {
+                uint16_t xcept = round_to_nearest(((float)a.x - b.x) * ((float)y - b.y) / ((float)a.y - b.y) + b.x);
+                if (!!(vt->linemap[xcept >> 3] & (1u << (xcept & 0x7)))) {
+                    if (y != a.y && y != b.y) {
+                        render_dot(vt->cur_sb, xcept, y);
+                        vt->linemap[xcept >> 3] &= ~(1u << (xcept & 0x7));
+                        ncepts--;
+                    }
+                }
+                else
+                {
+                    vt->linemap[xcept >> 3] |= (1u << (xcept & 0x7));
+                    ncepts++;
+                }
+            }
+        }
+
+        if (ncepts) {
+            scan_line_map(vt->cur_sb, vt->linemap, y);
+        }
+    }
+
+    return 0;
 }
