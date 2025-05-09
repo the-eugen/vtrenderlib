@@ -18,3 +18,15 @@ void vtr_scan_line(struct vtr_canvas* vt, uint16_t x0, uint16_t y0, uint16_t x1,
 
 int vtr_clear_screen(struct vtr_canvas* vt);
 int vtr_swap_buffers(struct vtr_canvas* vt);
+
+struct vtr_vertex
+{
+    uint16_t x;
+    uint16_t y;
+};
+
+/**
+ * Trace a polygon path given a list of verices.
+ * Last vertex will be traced back to the first one and the resulting polygon filled.
+ */
+int vtr_trace_poly(struct vtr_canvas* vt, size_t nvertices, const struct vtr_vertex* vertexlist);
