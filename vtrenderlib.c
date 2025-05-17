@@ -208,7 +208,7 @@ struct vtr_canvas* vtr_canvas_create(int ttyfd)
 
     // We preallocate enough space to hold the biggest number of draw calls (3 bytes per escape seq)
     // plus some slack to hold a cursor reset command (6 bytes) and some change.
-    size_t seqcap = (size_t)ws.ws_row * (ws.ws_col + 1);
+    size_t seqcap = (size_t)((ws.ws_row + 1) * ws.ws_col + 1) * 3;
     seqlist = malloc(seqcap);
     if (!seqlist) {
         goto error_out;
@@ -305,7 +305,7 @@ int vtr_resize(struct vtr_canvas* vt)
         goto error_out;
     }
 
-    size_t seqcap = (size_t)ws.ws_row * (ws.ws_col + 1);
+    size_t seqcap = (size_t)((ws.ws_row + 1) * ws.ws_col + 1) * 3;
     seqlist = malloc(seqcap);
     if (!seqlist) {
         goto error_out;
@@ -421,8 +421,6 @@ static char* extend_seq_buf(struct vtr_canvas* vt)
 
 static size_t set_pos_s(char* seq, size_t seqcap, uint16_t row, uint16_t col)
 {
-    assert(seqcap > 0);
-
     // Not having enough space for \0 is fine (which is the nwritten == seqcap case).
     size_t nwritten = snprintf(seq, seqcap, "\x1B[%d;%dH", row, col);
     if (nwritten > seqcap) {
@@ -434,8 +432,6 @@ static size_t set_pos_s(char* seq, size_t seqcap, uint16_t row, uint16_t col)
 
 static uint8_t draw_current_cell_s(char* seq, size_t seqcap, uint8_t mask)
 {
-    assert(seqcap > 0);
-
     if (seqcap < 3) {
         return 0;
     }
