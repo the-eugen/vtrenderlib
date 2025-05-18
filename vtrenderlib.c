@@ -85,6 +85,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <limits.h>
 #include <math.h>
 
 #include <unistd.h>
@@ -110,6 +111,10 @@
 
 #ifndef MAX
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
+#endif
+
+#ifndef CLAMP
+#define CLAMP(v, l, u) (MIN(MAX((v), (l)), (u)))
 #endif
 
 // Character cell dims in dots
@@ -140,9 +145,6 @@ struct vtr_canvas
     // Double-buffered stencil
     struct vtr_stencil_buf sb[2];
     struct vtr_stencil_buf* cur_sb;
-
-    // Bitmap buffer to cover xdots number of bit. Used for line scanning.
-    uint8_t* linemap;
 
     // Escape sequence list buffer
     char* seqlist;
@@ -195,14 +197,8 @@ struct vtr_canvas* vtr_canvas_create(int ttyfd)
     struct vtr_stencil_buf sb1 = {0};
     struct vtr_stencil_buf sb2 = {0};
     char* seqlist = NULL;
-    uint8_t* linemap = NULL;
 
     if (0 != create_stencil_buf(&sb1, ws.ws_row, ws.ws_col) || 0 != create_stencil_buf(&sb2, ws.ws_row, ws.ws_col)) {
-        goto error_out;
-    }
-
-    linemap = malloc((ws.ws_col * VT_CELL_XDOTS + 7) >> 3);
-    if (!linemap) {
         goto error_out;
     }
 
@@ -222,7 +218,6 @@ struct vtr_canvas* vtr_canvas_create(int ttyfd)
     vt->sb[0] = sb1;
     vt->sb[1] = sb2;
     vt->cur_sb = &vt->sb[0];
-    vt->linemap = linemap;
     vt->seqlist = seqlist;
     vt->seqcap = seqcap;
     vt->resize_pending = false;
@@ -235,7 +230,6 @@ error_out:
     free_stencil_buf(&sb1);
     free_stencil_buf(&sb2);
     free(seqlist);
-    free(linemap);
     free(vt);
 
     return NULL;
@@ -294,14 +288,8 @@ int vtr_resize(struct vtr_canvas* vt)
     struct vtr_stencil_buf sb1 = {0};
     struct vtr_stencil_buf sb2 = {0};
     char* seqlist = NULL;
-    uint8_t* linemap = NULL;
 
     if (0 != create_stencil_buf(&sb1, ws.ws_row, ws.ws_col) || 0 != create_stencil_buf(&sb2, ws.ws_row, ws.ws_col)) {
-        goto error_out;
-    }
-
-    linemap = malloc((ws.ws_col * VT_CELL_XDOTS + 7) >> 3);
-    if (!linemap) {
         goto error_out;
     }
 
@@ -324,7 +312,6 @@ int vtr_resize(struct vtr_canvas* vt)
     vt->sb[0] = sb1;
     vt->sb[1] = sb2;
     vt->cur_sb = &vt->sb[0];
-    vt->linemap = linemap;
     vt->seqlist = seqlist;
     vt->seqcap = seqcap;
     vt->resize_pending = false;
@@ -337,7 +324,6 @@ error_out:
 
     free_stencil_buf(&sb1);
     free_stencil_buf(&sb2);
-    free(linemap);
     free(seqlist);
 
     return -1;
@@ -380,26 +366,6 @@ void vtr_close(struct vtr_canvas* vt)
 int vtr_clear_screen(struct vtr_canvas* vt)
 {
     return sendseq(vt->fd, "\x1B[2J", 4);
-}
-
-void render_dot(struct vtr_stencil_buf* sb, uint16_t x, uint16_t y)
-{
-    assert(x < sb->xdots && y < sb->ydots);
-
-    uint16_t row = y / VT_CELL_YDOTS;
-    uint16_t col = x / VT_CELL_XDOTS;
-    uint16_t ncols = sb->xdots / VT_CELL_XDOTS;
-    uint16_t stencil = (1u << (y & (VT_CELL_YDOTS - 1))) << ((x & (VT_CELL_XDOTS - 1)) * 4);
-    sb->buffer[row * ncols + col] |= stencil;
-}
-
-void vtr_render_dot(struct vtr_canvas* vt, uint16_t x, uint16_t y)
-{
-    if (x >= vt->xdots || y >= vt->ydots) {
-        return;
-    }
-
-    render_dot(vt->cur_sb, x, y);
 }
 
 static char* extend_seq_buf(struct vtr_canvas* vt)
@@ -509,6 +475,29 @@ int vtr_swap_buffers(struct vtr_canvas* vt)
     return 0;
 }
 
+static void render_dot(struct vtr_stencil_buf* sb, uint16_t x, uint16_t y)
+{
+    assert(x < sb->xdots && y < sb->ydots);
+
+    uint16_t row = y / VT_CELL_YDOTS;
+    uint16_t col = x / VT_CELL_XDOTS;
+    uint16_t ncols = sb->xdots / VT_CELL_XDOTS;
+    uint16_t stencil = (1u << (y & (VT_CELL_YDOTS - 1))) << ((x & (VT_CELL_XDOTS - 1)) * 4);
+    sb->buffer[row * ncols + col] |= stencil;
+}
+
+static inline bool point_test(struct vtr_canvas* vt, int x, int y)
+{
+    return (x >= 0 && x < vt->xdots) && (y >= 0 && y < vt->ydots);
+}
+
+void vtr_render_dot(struct vtr_canvas* vt, int x, int y)
+{
+    if (point_test(vt, x, y)) {
+        render_dot(vt->cur_sb, x, y);
+    }
+}
+
 /**
  * Calculate a line slope.
  * Returns INFINITY if slope is undefined.
@@ -521,37 +510,37 @@ static float calc_slope(uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1)
 /**
  * Round a non-negative real number to nearest integer, ties are rounded up (e.g. 0.5 -> 1).
  */
-static uint16_t round_to_nearest(float f)
+static int round_to_nearest(float f)
 {
-    assert(f >= 0);
-    return (uint16_t)(f + 0.5f);
+    return (int)(f + 0.5f);
 }
 
-void scan_line(struct vtr_stencil_buf* sb, uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1)
+static void scan_line(struct vtr_stencil_buf* sb, uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1)
 {
+    assert(x0 >= 0 && x0 < sb->xdots);
+    assert(x1 >= 0 && x1 < sb->xdots);
+    assert(y0 >= 0 && y0 < sb->ydots);
+    assert(y1 >= 0 && y1 < sb->ydots);
+
     float m = calc_slope(x0, y0, x1, y1);
     int hdir = (x0 < x1 ? 1 : -1);
     int vdir = (y0 < y1 ? 1 : -1);
 
     if (m == 0.0) {
-        do
+        for (int x = x0; x != x1 + hdir; x += hdir)
         {
-            render_dot(sb, x0, y0);
-            x0 += hdir;
-        } while (x0 != x1 + hdir);
+            render_dot(sb, x, y0);
+        }
     } else if (m == INFINITY) {
-        do
+        for (int y = y0; y != y1 + vdir; y += vdir)
         {
-            render_dot(sb, x0, y0);
-            y0 += vdir;
-        } while (y0 != y1 + vdir);
+            render_dot(sb, x0, y);
+        }
     } else if (m == -1.0 || m == 1.0) {
-        do
+        for (int x = x0, y = y0; x != x1 + hdir; x += hdir, y += vdir)
         {
-            render_dot(sb, x0, y0);
-            x0 += hdir;
-            y0 += vdir;
-        } while (x0 != x1 + hdir);
+            render_dot(sb, x, y);
+        }
     } else {
 
         // Generic slope case.
@@ -566,116 +555,165 @@ void scan_line(struct vtr_stencil_buf* sb, uint16_t x0, uint16_t y0, uint16_t x1
         //
         // If the distance is 0.5 then both boxes have equal fragment sizes, in which case we opt to render both.
 
-        do
-        {
-            render_dot(sb, x0, y0);
+        float yf = 0, xf = 0;
 
-            if (m > -1.0 && m < 1.0) {
-                x0 += hdir;
-                float y = m * ((float)x0 - x1) + y1;
-                y0 = round_to_nearest(y); // 0.5 will round up
-
-                if (y - y0 == -0.5) {
-                    render_dot(sb, x0, y0 - 1);
+        if (m > -1.0 && m < 1.0) {
+            for (int x = x0, y = y0; x != x1 + hdir;)
+            {
+                render_dot(sb, x, y);
+                if (yf - y == -0.5) {
+                    render_dot(sb, x, y - 1);
                 }
-            } else {
-                y0 += vdir;
-                float x = ((float)y0 - y1) / m + x1;
-                x0 = round_to_nearest(x); // 0.5 will round up
 
-                if (x - x0 == -0.5) {
-                    render_dot(sb, x0 - 1, y0);
-                }
+                x += hdir;
+                yf = m * ((float)x - x1) + y1;
+                y = round_to_nearest(yf);
             }
-        } while (x0 != x1 + hdir && y0 != y1 + vdir);
-    }
-}
+        } else {
+            for (int x = x0, y = y0; y != y1 + vdir;)
+            {
+                render_dot(sb, x, y);
+                if (xf - x == -0.5) {
+                    render_dot(sb, x - 1, y);
+                }
 
-void vtr_scan_line(struct vtr_canvas* vt, uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1)
-{
-    scan_line(vt->cur_sb, x0, y0, x1, y1);
-}
-
-static void scan_line_map(struct vtr_stencil_buf* sb, const uint8_t* linemap, uint16_t y)
-{
-    bool in_region = false;
-
-    for (uint16_t x = 0; x < sb->xdots; x++) {
-        bool bit = !!(linemap[x >> 3] & (1u << (x & 0x7)));
-        if (!in_region && bit) {
-            in_region = true;
-        } else if (in_region && bit) {
-            in_region = false;
-        }
-
-        if (in_region || bit) {
-            render_dot(sb, x, y);
+                y += vdir;
+                xf = ((float)y - y1) / m + x1;
+                x = round_to_nearest(xf);
+            }
         }
     }
 }
 
-int vtr_trace_poly(struct vtr_canvas* vt, size_t nvertices, const struct vtr_vertex* vertexlist)
+void vtr_scan_line(struct vtr_canvas* vt, int x0, int y0, int x1, int y1)
+{
+    int dx = x1 - x0, dy = y1 - y0;
+    int xmin = 0, ymin = 0;
+    int xmax = vt->xdots - 1, ymax = vt->ydots - 1;
+
+    // precomputed edge test parameters: left, right, bottom, top
+    int p[4] = { -dx, dx, -dy, dy };
+    int q[4] = { x0 - xmin, xmax - x0, y0 - ymin, ymax - y0 };
+
+    // find edge constraints on t in p * t <= q for each edge
+    // p == 0:
+    //  0 * t <= q, where q < 0 -> impossible, reject
+    //  0 * t <= q, where q >= 0 -> trivial, no restriction on t from this edge
+    //
+    // p != 0:
+    //  t <= q / p -> t is where we cross the edge boundary
+    //  if q < 0 we enter the rect at t >= q / p -> tenter = max(tenter, t)
+    //  if q > 0 we exit the rect at t <= q / p -> texit = min(texit, t)
+    //
+    // For line to be clipped to the rect we need tenter <= texit
+
+    float tentry = 0, texit = 1;
+    for (int i = 0; i < 4; i++) {
+        if (p[i] == 0) {
+            if (q[i] < 0) {
+                return;
+            }
+        } else {
+            float t = (float)(q[i]) / p[i];
+            if (p[i] < 0) {
+                tentry = MAX(tentry, t);
+            } else {
+                texit = MIN(texit, t);
+            }
+        }
+    }
+
+    if (tentry <= texit) {
+        scan_line(vt->cur_sb, floorf(x0 + tentry * dx), floorf(y0 + tentry * dy), floorf(x0 + texit * dx), floorf(y0 + texit * dy));
+    }
+}
+
+int vtr_trace_poly(struct vtr_canvas* vt, size_t nvertices, const struct vtr_vertex* vlist)
 {
     assert(vt);
-    assert(vertexlist);
+    assert(vlist);
 
     if (nvertices == 0) {
         return 0;
     }
 
     if (nvertices == 1) {
-        render_dot(vt->cur_sb, vertexlist[0].x, vertexlist[0].y);
+        vtr_render_dot(vt, vlist[0].x, vlist[0].y);
         return 0;
     }
 
     if (nvertices == 2) {
-        scan_line(vt->cur_sb, vertexlist[0].x, vertexlist[0].y, vertexlist[1].x, vertexlist[1].y);
+        vtr_scan_line(vt, vlist[0].x, vlist[0].y, vlist[1].x, vlist[1].y);
         return 0;
     }
 
     assert(nvertices >= 3);
 
-    uint16_t ymax = 0, ymin = UINT16_MAX;
+    int cross = 0;
+    int ymax = INT_MIN, ymin = INT_MAX;
     for (size_t i = 0; i < nvertices; i++) {
-        // TODO: should we cull out of bounds vertices instead of failing?
-        if (vertexlist[i].x >= vt->xdots || vertexlist[i].y >= vt->ydots) {
-            return -1;
-        }
+        ymin = MIN(ymin, vlist[i].y);
+        ymax = MAX(ymax, vlist[i].y);
 
-        ymin = MIN(ymin, vertexlist[i].y);
-        ymax = MAX(ymax, vertexlist[i].y);
+        struct vtr_vertex a, b, c;
+        a = vlist[i];
+        b = (i + 1 == nvertices ? vlist[0] : vlist[i + 1]);
+        c = (i + 2 == nvertices ? vlist[0] : (i + 1 == nvertices ? vlist[1] : vlist[i + 2]));
+
+        // Calculate 2d cross products and make sure they maintain the same sign
+        int cross2  = (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x);
+        if (cross2 == 0) {
+            continue;
+        } else if ((cross > 0 && cross2 < 0) || (cross < 0 && cross2 > 0)) {
+            return -EINVAL;
+        } else {
+            cross = cross2;
+        }
     }
 
-    for (uint16_t y = ymin; y != ymax + 1; y++) {
+    // Clip bounding box
+    if ((ymin < 0 && ymax < 0) || (ymin >= vt->ydots && ymax >= vt->ydots)) {
+        return 0;
+    } else {
+        ymin = CLAMP(ymin, 0, vt->ydots - 1);
+        ymax = CLAMP(ymax, 0, vt->ydots - 1);
+    }
+
+    // Line-scan the convex polygon
+    for (int y = ymin; y != ymax + 1; y++) {
+        int xcepts[2];
         size_t ncepts = 0;
-        memset(vt->linemap, 0, (vt->xdots + 7) >> 3);
+
         for (size_t i = 0; i < nvertices; i++) {
-            struct vtr_vertex a = vertexlist[i];
-            struct vtr_vertex b = (i + 1 == nvertices ? vertexlist[0] : vertexlist[i + 1]);
+            struct vtr_vertex a = vlist[i];
+            struct vtr_vertex b = (i + 1 == nvertices ? vlist[0] : vlist[i + 1]);
 
             if (y == a.y && y == b.y) {
-                scan_line(vt->cur_sb, a.x, a.y, b.x, b.y);
+                // Special case: edge is horizontal and has no x intercepts.
+                vtr_scan_line(vt, a.x, a.y, b.x, b.y);
             } else if ((y == a.y || y == b.y) && (y == ymin || y == ymax)) {
-                render_dot(vt->cur_sb, (y == a.y ? a.x : b.x), y);
+                // Special case: x intercept is a min/max vertex
+                int xcept = (y == a.y ? a.x : b.x);
+                vtr_render_dot(vt, xcept, y);
             } else if ((y >= a.y && y <= b.y) || (y >= b.y && y <= a.y)) {
-                uint16_t xcept = round_to_nearest(((float)a.x - b.x) * ((float)y - b.y) / ((float)a.y - b.y) + b.x);
-                if (!!(vt->linemap[xcept >> 3] & (1u << (xcept & 0x7)))) {
-                    if (y != a.y && y != b.y) {
-                        render_dot(vt->cur_sb, xcept, y);
-                        vt->linemap[xcept >> 3] &= ~(1u << (xcept & 0x7));
-                        ncepts--;
-                    }
+                int xcept = (int)((float)(a.x - b.x) * (y - b.y) / (a.y - b.y) + b.x);
+
+                // Intercepts can repeat if 2 edges meet at current y, ignore that
+                switch(ncepts) {
+                    case 2: if (xcepts[1] == xcept) continue;
+                    case 1: if (xcepts[0] == xcept) continue;
+                    case 0: break;
                 }
-                else
-                {
-                    vt->linemap[xcept >> 3] |= (1u << (xcept & 0x7));
-                    ncepts++;
-                }
+
+                assert(ncepts < 2);
+                xcepts[ncepts++] = xcept;
             }
         }
 
-        if (ncepts) {
-            scan_line_map(vt->cur_sb, vt->linemap, y);
+        if (ncepts == 2) {
+            vtr_scan_line(vt, xcepts[0], y, xcepts[1], y);
+        } else if (ncepts == 1) {
+            vtr_render_dot(vt, xcepts[0], y);
         }
     }
 

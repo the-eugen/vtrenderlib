@@ -13,16 +13,27 @@ int vtr_resize(struct vtr_canvas* vt);
 uint16_t vtr_xdots(struct vtr_canvas* vt);
 uint16_t vtr_ydots(struct vtr_canvas* vt);
 
-void vtr_render_dot(struct vtr_canvas* vt, uint16_t x, uint16_t y);
-void vtr_scan_line(struct vtr_canvas* vt, uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1);
-
 int vtr_clear_screen(struct vtr_canvas* vt);
 int vtr_swap_buffers(struct vtr_canvas* vt);
 
+/*
+ * Rasterizer calls.
+ */
+
+/**
+ * Render a dot at a given VT coordinates.
+ */
+void vtr_render_dot(struct vtr_canvas* vt, int x, int y);
+
+/**
+ * Scan a line give 2 dot coordinates.
+ */
+void vtr_scan_line(struct vtr_canvas* vt, int x0, int y0, int x1, int y1);
+
 struct vtr_vertex
 {
-    uint16_t x;
-    uint16_t y;
+    int x;
+    int y;
 };
 
 /**

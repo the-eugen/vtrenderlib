@@ -8,7 +8,7 @@ BIN := vt-path
 all: $(BIN)
 
 $(BIN): main.o
-	$(CC) $(LDFLAGS) $< -o $@ $(VTRLIB_PATH)/$(VTRLIB)
+	$(CC) $(LDFLAGS) $< -o $@ $(VTRLIB_PATH)/$(VTRLIB) -lm
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@

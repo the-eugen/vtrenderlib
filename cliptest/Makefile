@@ -1,7 +1,7 @@
 VTRLIB := vtrenderlib.a
 CC := gcc
-CFLAGS := -Wall -O2 -fPIC -I$(VTRLIB_PATH) -I.
-BIN := vt-loh
+CFLAGS := -Wall -O0 -ggdb3 -I$(VTRLIB_PATH) -I.
+BIN := vt-cliptest
 
 .PHONY: all clean
 
@@ -15,4 +15,3 @@ $(BIN): main.o
 
 clean:
 	rm -f *.o $(BIN)
-
