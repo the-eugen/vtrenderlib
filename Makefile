@@ -4,7 +4,7 @@ AR := ar
 CFLAGS := -Wall -O2 -fPIC -I.
 SRC := vtrenderlib.c
 OBJ := $(SRC:.c=.o)
-DEMOS := loh path
+DEMOS := loh path cpuutil
 
 .PHONY: all clean demos
 
