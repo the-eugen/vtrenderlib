@@ -49,16 +49,16 @@ int main(void)
     while(true) {
         vtr_resize(g_vt);
 
-        vtr_scan_line(g_vt, x + margin, y + hbox - margin, x + charw / 2, y + margin);
-        vtr_scan_line(g_vt, x + charw / 2, y + margin, x + charw - margin, y + hbox - margin);
+        vtr_scan_linec(g_vt, x + margin, y + hbox - margin, x + charw / 2, y + margin, VTR_COLOR_RED);
+        vtr_scan_linec(g_vt, x + charw / 2, y + margin, x + charw - margin, y + hbox - margin, VTR_COLOR_GREEN);
 
-        vtr_scan_line(g_vt, x + charw + margin, y + margin, x + charw * 2 - margin, y + margin);
-        vtr_scan_line(g_vt, x + charw + margin, y + margin, x + charw + margin, y + hbox - margin);
-        vtr_scan_line(g_vt, x + charw + margin, y + hbox - margin, x + charw * 2 - margin, y + hbox - margin);
-        vtr_scan_line(g_vt, x + charw * 2 - margin, y + hbox - margin, x + charw * 2 - margin, y + margin);
+        vtr_scan_linec(g_vt, x + charw + margin, y + margin, x + charw * 2 - margin, y + margin, VTR_COLOR_YELLOW);
+        vtr_scan_linec(g_vt, x + charw + margin, y + margin, x + charw + margin, y + hbox - margin, VTR_COLOR_BLUE);
+        vtr_scan_linec(g_vt, x + charw + margin, y + hbox - margin, x + charw * 2 - margin, y + hbox - margin, VTR_COLOR_MAGENTA);
+        vtr_scan_linec(g_vt, x + charw * 2 - margin, y + hbox - margin, x + charw * 2 - margin, y + margin, VTR_COLOR_CYAN);
 
-        vtr_scan_line(g_vt, x + charw * 2 + margin, y + margin, x + charw * 3 - margin, y + hbox - margin);
-        vtr_scan_line(g_vt, x + charw * 3 - margin, y + margin, x + charw * 2 + margin, y + hbox - margin);
+        vtr_scan_linec(g_vt, x + charw * 2 + margin, y + margin, x + charw * 3 - margin, y + hbox - margin, VTR_COLOR_WHITE);
+        vtr_scan_linec(g_vt, x + charw * 3 - margin, y + margin, x + charw * 2 + margin, y + hbox - margin, VTR_COLOR_DEFAULT);
 
         vtr_swap_buffers(g_vt);
         usleep(1000000 / 60);
