@@ -507,14 +507,6 @@ static float calc_slope(uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1)
     return (x1 == x0 ? INFINITY : ((float)y1 - y0) / ((float)x1 - x0));
 }
 
-/**
- * Round a non-negative real number to nearest integer, ties are rounded up (e.g. 0.5 -> 1).
- */
-static int round_to_nearest(float f)
-{
-    return (int)(f + 0.5f);
-}
-
 static void scan_line(struct vtr_stencil_buf* sb, uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1)
 {
     assert(x0 >= 0 && x0 < sb->xdots);
@@ -567,7 +559,7 @@ static void scan_line(struct vtr_stencil_buf* sb, uint16_t x0, uint16_t y0, uint
 
                 x += hdir;
                 yf = m * ((float)x - x1) + y1;
-                y = round_to_nearest(yf);
+                y = roundf(yf);
             }
         } else {
             for (int x = x0, y = y0; y != y1 + vdir;)
@@ -579,7 +571,7 @@ static void scan_line(struct vtr_stencil_buf* sb, uint16_t x0, uint16_t y0, uint
 
                 y += vdir;
                 xf = ((float)y - y1) / m + x1;
-                x = round_to_nearest(xf);
+                x = roundf(xf);
             }
         }
     }
@@ -624,7 +616,7 @@ void vtr_scan_line(struct vtr_canvas* vt, int x0, int y0, int x1, int y1)
     }
 
     if (tentry <= texit) {
-        scan_line(vt->cur_sb, floorf(x0 + tentry * dx), floorf(y0 + tentry * dy), floorf(x0 + texit * dx), floorf(y0 + texit * dy));
+        scan_line(vt->cur_sb, roundf(x0 + tentry * dx), roundf(y0 + tentry * dy), roundf(x0 + texit * dx), roundf(y0 + texit * dy));
     }
 }
 
