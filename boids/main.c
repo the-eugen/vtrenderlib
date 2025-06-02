@@ -13,6 +13,15 @@
 
 #include <vtrenderlib.h>
 
+#ifndef NDEBUG
+#define DBG
+#endif
+
+#ifdef FLT_EPSILON
+#undef FLT_EPSILON
+#endif
+#define FLT_EPSILON 0.001
+
 // Boid dimentions in dots.
 #define VT_BOID_WIDTH   6
 #define VT_BOID_LENGTH  9
@@ -22,12 +31,17 @@
 
 // Boid roll angle for banking in degrees.
 // Larger angles produce sharper turns.
-#define VT_BOID_BANK_ANGLE   60
+#define VT_BOID_BANK_ANGLE   80
 
 // Wandering configuration.
 #define VT_BOID_AVG_HEADING_DELAY_MS        2000
 #define VT_BOID_HEADING_DELAY_VARIATION_MS  500
 #define VT_BOID_HEADING_CHANGE_LIMIT_DEG    30
+
+#define VT_BOID_VIEW_RANGE                  80
+#define VT_BOID_VIEW_RANGE_SQUARED          (VT_BOID_VIEW_RANGE * VT_BOID_VIEW_RANGE)
+#define VT_BOID_REPULSION_RANGE             20
+#define VT_BOID_REPULSION_RANGE_SQUARED     (VT_BOID_REPULSION_RANGE * VT_BOID_REPULSION_RANGE)
 
 // Precomputed radial force for banking
 static float g_boid_radial_force;
@@ -52,6 +66,8 @@ struct vt_boid
     // wandering state
     int heading_change_delay;
     int cur_heading_time;
+
+    enum vtr_color color;
 };
 
 static struct vtr_canvas* g_vt;
@@ -61,6 +77,38 @@ static size_t g_nboids;
 static inline float grad2rad(int grad)
 {
     return M_PI * grad / 180;
+}
+
+static bool are_equalf(float a, float b)
+{
+    return fabsf(a - b) <= FLT_EPSILON;
+}
+
+static float roundfe(float v)
+{
+    return roundf(v / FLT_EPSILON) * FLT_EPSILON;
+}
+
+static float heading_angle(struct vec2f v)
+{
+    float hrad = atan2f(v.y, v.x);
+    hrad = (hrad < 0 ? hrad + M_PI * 2 : hrad);
+    return roundfe(hrad);
+}
+
+static struct vec2f heading_vec(float heading)
+{
+    return (struct vec2f){roundfe(cosf(heading)), roundfe(sinf(heading))};
+}
+
+static inline struct vec2f vec2f_add(struct vec2f a, struct vec2f b)
+{
+    return (struct vec2f){a.x + b.x, a.y + b.y};
+}
+
+static inline struct vec2f vec2f_mul(struct vec2f a, float b)
+{
+    return (struct vec2f){a.x * b, a.y * b};
 }
 
 static inline struct vec2f vec2f_mul_add(struct vec2f a, struct vec2f b, int scale)
@@ -76,14 +124,16 @@ static inline struct vec2f vec2f_sub(struct vec2f a, struct vec2f b)
 static inline struct vec2f vec2f_unit(struct vec2f v)
 {
     float m = sqrtf(v.x * v.x + v.y * v.y);
-    assert(m != 0);
+    if (m == 0) {
+        return v;
+    }
 
     return (struct vec2f){v.x / m, v.y / m};
 }
 
 static inline struct vec2f vec2f_normal(struct vec2f v)
 {
-    return (struct vec2f){-v.y, v.x};
+    return vec2f_unit((struct vec2f){-v.y, v.x});
 }
 
 static inline struct vec2f vec2f_rot(struct vec2f v, double rad)
@@ -97,9 +147,14 @@ static inline struct vec2f vec2f_rot(struct vec2f v, double rad)
     };
 }
 
+static inline float vec2f_dist_squared(struct vec2f a, struct vec2f b)
+{
+    return (a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y);
+}
+
 static inline struct vtr_vertex vec2f_project(struct vec2f v)
 {
-    return (struct vtr_vertex){(int)(v.x + 0.5f), (int)(v.y + 0.5f)};
+    return (struct vtr_vertex){roundf(v.x), roundf(v.y)};
 }
 
 static inline int random_value_in_range(int min, int max)
@@ -113,7 +168,6 @@ static inline int random_value_spread(int base, int spread)
     assert(spread != 0);
     return base + ((rand() % (spread * 2)) - spread);
 }
-
 
 // Implements random wandering for a boid with no neighbours in view range.
 // Gets called every frame to apply random gradual changes to boid's heading and follow them.
@@ -147,14 +201,67 @@ static float bank(struct vt_boid* b, int dtime)
     return b->heading - heading;
 }
 
+static void draw_debug_vec(struct vec2f origin, struct vec2f vec, int len, enum vtr_color fgc)
+{
+    struct vtr_vertex start = vec2f_project(origin);
+    struct vtr_vertex end = vec2f_project(vec2f_mul_add(origin, vec, len));
+
+    vtr_scan_linec(g_vt, start.x, start.y, end.x, end.y, fgc);
+}
+
 // Update simulation, dt is in millisecs.
 static void update(double dtime)
 {
     for (size_t i = 0; i < g_nboids; i++) {
         struct vt_boid* b = g_boids + i;
 
-        // TODO: only wander if no boids are nearby
-        wander(b, (int)dtime);
+        // The neighbors search below makes the entire update quadratic.
+        // It's not super terrible given the low number of boids i anticipate,
+        // but i could think about maybe using a proximity lookup db.
+
+        size_t total_neighbors = 0;
+        struct vec2f alignment = {0, 0};
+        struct vec2f cohesion = {0, 0};
+        struct vec2f separation = {0, 0};
+        for (size_t j = 0; j < g_nboids; j++) {
+            if (j == i) {
+                continue;
+            }
+
+            struct vt_boid* other = g_boids + j;
+            float dist_squared = vec2f_dist_squared(b->p, other->p);
+            if (dist_squared <= VT_BOID_VIEW_RANGE_SQUARED) {
+                total_neighbors += 1;
+                alignment = vec2f_add(alignment, other->v);
+                cohesion = vec2f_add(cohesion, other->p);
+
+                if (dist_squared <= VT_BOID_REPULSION_RANGE_SQUARED)
+                {
+                    struct vec2f repultion = vec2f_mul(vec2f_sub(b->p, other->p), 1.0f / (dist_squared == 0 ? 0.001f : dist_squared));
+                    separation = vec2f_add(separation, repultion);
+                }
+            }
+        }
+
+        if (total_neighbors == 0) {
+            wander(b, (int)dtime);
+        } else {
+            alignment = vec2f_unit(alignment);
+
+            cohesion = vec2f_add(cohesion, b->p);
+            cohesion = (struct vec2f){cohesion.x / (total_neighbors + 1), cohesion.y / (total_neighbors + 1)};
+            cohesion = vec2f_unit(vec2f_sub(cohesion, b->p));
+
+            separation = vec2f_unit(separation);
+
+            struct vec2f heading_vec = {0, 0};
+            heading_vec = vec2f_add(heading_vec, alignment);
+            heading_vec = vec2f_add(heading_vec, cohesion);
+            heading_vec = vec2f_add(heading_vec, separation);
+
+            b->desired_heading = heading_angle(heading_vec);
+        }
+
         float dheading = bank(b, (int)dtime);
 
         b->p.x += VT_BOID_SPEED * cosf(b->heading) * dtime / 1000;
@@ -188,7 +295,7 @@ static void draw(void)
             vec2f_project(vec2f_mul_add(b->p, b->v, VT_BOID_LENGTH)),
         };
 
-        vtr_trace_poly(g_vt, 3, buf);
+        vtr_trace_polyc(g_vt, 3, buf, b->color);
     }
 }
 
@@ -226,17 +333,26 @@ int main(void)
         exit(error);
     }
 
-    g_nboids = 32;
+    g_nboids = 64;
     g_boids = calloc(sizeof(*g_boids), g_nboids);
     if (!g_boids) {
         exit(ENOMEM);
     }
 
+    static const int colors[] = {
+        VTR_COLOR_YELLOW,
+        VTR_COLOR_BLUE,
+        VTR_COLOR_GREEN,
+        VTR_COLOR_MAGENTA
+    };
+
     for (size_t i = 0; i < g_nboids; i++) {
         struct vt_boid* b = g_boids + i;
         b->p = (struct vec2f){random_value_in_range(0, vtr_xdots(g_vt) - 1), random_value_in_range(0, vtr_ydots(g_vt) - 1)};
-        b->v = (struct vec2f){1.0, 0.0};
+        b->desired_heading = b->heading = grad2rad(random_value_in_range(0, 360));
+        b->v = (struct vec2f){cosf(b->heading), sinf(b->heading)};
         b->n = vec2f_normal(b->v);
+        b->color = colors[random_value_in_range(0, 4)];
     }
 
     // The math below precomputed approximated boid radial force generated by a fixed banking angle
