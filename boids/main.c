@@ -22,26 +22,29 @@
 #endif
 #define FLT_EPSILON 0.001
 
-// Boid dimentions in dots.
+// Boid dimensions in dots.
 #define VT_BOID_WIDTH   6
 #define VT_BOID_LENGTH  9
 
 // Boid linear speed in dots per second.
 #define VT_BOID_SPEED        50
 
-// Boid roll angle for banking in degrees.
-// Larger angles produce sharper turns.
+// Boid roll angle for banking, in degrees.
+// Larger angles produce sharper turns, but should be kept under 90.
 #define VT_BOID_BANK_ANGLE   80
+_Static_assert(VT_BOID_BANK_ANGLE < 90);
 
 // Wandering configuration.
 #define VT_BOID_AVG_HEADING_DELAY_MS        2000
 #define VT_BOID_HEADING_DELAY_VARIATION_MS  500
 #define VT_BOID_HEADING_CHANGE_LIMIT_DEG    30
 
+// Sensing ranges.
 #define VT_BOID_VIEW_RANGE                  80
 #define VT_BOID_VIEW_RANGE_SQUARED          (VT_BOID_VIEW_RANGE * VT_BOID_VIEW_RANGE)
 #define VT_BOID_REPULSION_RANGE             20
 #define VT_BOID_REPULSION_RANGE_SQUARED     (VT_BOID_REPULSION_RANGE * VT_BOID_REPULSION_RANGE)
+_Static_assert(VT_BOID_REPULSION_RANGE < VT_BOID_VIEW_RANGE);
 
 // Precomputed radial force for banking
 static float g_boid_radial_force;
@@ -54,12 +57,12 @@ struct vec2f
 
 struct vt_boid
 {
-    // position, velocity and normal vectors of a boid, normals are unit vectors (len is 1).
+    // position, velocity and normal vectors, normals are unit vectors.
     struct vec2f p;
     struct vec2f v;
     struct vec2f n;
 
-    // heading angle, in radians
+    // heading angles, in radians
     float heading;
     float desired_heading;
 
@@ -67,6 +70,7 @@ struct vt_boid
     int heading_change_delay;
     int cur_heading_time;
 
+    // rendering data
     enum vtr_color color;
 };
 
@@ -169,13 +173,11 @@ static inline int random_value_spread(int base, int spread)
     return base + ((rand() % (spread * 2)) - spread);
 }
 
-// Implements random wandering for a boid with no neighbours in view range.
-// Gets called every frame to apply random gradual changes to boid's heading and follow them.
+// Implements small random changes to boid's heading after keeping the current heading for some time.
 static void wander(struct vt_boid* b, int dtime)
 {
     b->cur_heading_time += dtime;
 
-    // See if we've been using our current target heading for enough time and change it if needed
     if (b->cur_heading_time >= b->heading_change_delay) {
         b->cur_heading_time = 0;
         b->heading_change_delay = random_value_spread(VT_BOID_AVG_HEADING_DELAY_MS, VT_BOID_HEADING_DELAY_VARIATION_MS);
@@ -209,7 +211,7 @@ static void draw_debug_vec(struct vec2f origin, struct vec2f vec, int len, enum 
     vtr_scan_linec(g_vt, start.x, start.y, end.x, end.y, fgc);
 }
 
-// Update simulation, dt is in millisecs.
+// Update simulation, dtime is in millisecs.
 static void update(double dtime)
 {
     for (size_t i = 0; i < g_nboids; i++) {
@@ -217,7 +219,7 @@ static void update(double dtime)
 
         // The neighbors search below makes the entire update quadratic.
         // It's not super terrible given the low number of boids i anticipate,
-        // but i could think about maybe using a proximity lookup db.
+        // but i could think about maybe using a proximity lookup via space partitioning.
 
         size_t total_neighbors = 0;
         struct vec2f alignment = {0, 0};
@@ -237,14 +239,16 @@ static void update(double dtime)
 
                 if (dist_squared <= VT_BOID_REPULSION_RANGE_SQUARED)
                 {
-                    struct vec2f repultion = vec2f_mul(vec2f_sub(b->p, other->p), 1.0f / (dist_squared == 0 ? 0.001f : dist_squared));
-                    separation = vec2f_add(separation, repultion);
+                    // If distance rounds to 0 use a tiny distance instead to compute a repulsion vector.
+                    struct vec2f repulsion = vec2f_mul(vec2f_sub(b->p, other->p),
+                                                       1.0f / (dist_squared == 0 ? 0.001f : dist_squared));
+                    separation = vec2f_add(separation, repulsion);
                 }
             }
         }
 
         if (total_neighbors == 0) {
-            wander(b, (int)dtime);
+            wander(b, roundfe(dtime));
         } else {
             alignment = vec2f_unit(alignment);
 
@@ -254,6 +258,7 @@ static void update(double dtime)
 
             separation = vec2f_unit(separation);
 
+            // TODO: weighted adds
             struct vec2f heading_vec = {0, 0};
             heading_vec = vec2f_add(heading_vec, alignment);
             heading_vec = vec2f_add(heading_vec, cohesion);
@@ -262,7 +267,7 @@ static void update(double dtime)
             b->desired_heading = heading_angle(heading_vec);
         }
 
-        float dheading = bank(b, (int)dtime);
+        float dheading = bank(b, roundfe(dtime));
 
         b->p.x += VT_BOID_SPEED * cosf(b->heading) * dtime / 1000;
         b->p.y += VT_BOID_SPEED * sinf(b->heading) * dtime / 1000;
@@ -295,7 +300,7 @@ static void draw(void)
             vec2f_project(vec2f_mul_add(b->p, b->v, VT_BOID_LENGTH)),
         };
 
-        vtr_trace_polyc(g_vt, 3, buf, b->color);
+        vtr_trace_polyc(g_vt, sizeof(buf) / sizeof(*buf), buf, b->color);
     }
 }
 
@@ -333,6 +338,8 @@ int main(void)
         exit(error);
     }
 
+    srand((unsigned int)time(NULL));
+
     g_nboids = 64;
     g_boids = calloc(sizeof(*g_boids), g_nboids);
     if (!g_boids) {
@@ -350,15 +357,13 @@ int main(void)
         struct vt_boid* b = g_boids + i;
         b->p = (struct vec2f){random_value_in_range(0, vtr_xdots(g_vt) - 1), random_value_in_range(0, vtr_ydots(g_vt) - 1)};
         b->desired_heading = b->heading = grad2rad(random_value_in_range(0, 360));
-        b->v = (struct vec2f){cosf(b->heading), sinf(b->heading)};
+        b->v = heading_vec(b->heading);
         b->n = vec2f_normal(b->v);
-        b->color = colors[random_value_in_range(0, 4)];
+        b->color = colors[random_value_in_range(0, sizeof(colors) / sizeof(*colors))];
     }
 
-    // The math below precomputed approximated boid radial force generated by a fixed banking angle
+    // The math below precomputes approximated boid radial force generated by a fixed banking angle
     g_boid_radial_force = 9.81 * tanf(grad2rad(VT_BOID_BANK_ANGLE)) / VT_BOID_SPEED;
-
-    srand((unsigned int)time(NULL));
 
     while (true) {
         vtr_resize(g_vt);
