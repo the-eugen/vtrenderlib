@@ -446,6 +446,15 @@ int vtr_swap_buffers(struct vtr_canvas* vt)
     bool skip_cell = true;
     uint8_t cur_fgc = VTR_COLOR_DEFAULT;
 
+    #define VTR_RETRY_SEQUENCE(_seq_call_) \
+        do { \
+            cmdlen = (_seq_call_); \
+            seqlen += cmdlen; \
+            if (cmdlen == 0 && !extend_seq_buf(vt)) { \
+                return -1; \
+            } \
+        } while (cmdlen == 0) \
+
     for (uint16_t row = 1; row <= vt->nrows; row++) {
         for (uint16_t col = 1; col <= vt->ncols; col++, cell_idx++) {
             if (cur_sb->buffer[cell_idx] == prev_sb->buffer[cell_idx] &&
@@ -455,14 +464,7 @@ int vtr_swap_buffers(struct vtr_canvas* vt)
             }
 
             if (skip_cell) {
-                do {
-                    cmdlen = set_pos_s(vt->seqlist + seqlen, vt->seqcap - seqlen, row, col);
-                    seqlen += cmdlen;
-
-                    if (cmdlen == 0 && !extend_seq_buf(vt)) {
-                        return -1;
-                    }
-                } while (cmdlen == 0);
+                VTR_RETRY_SEQUENCE(set_pos_s(vt->seqlist + seqlen, vt->seqcap - seqlen, row, col));
             }
 
             // Actual braille cell has a different mask layout, bit numbers displayed below.
@@ -483,38 +485,17 @@ int vtr_swap_buffers(struct vtr_canvas* vt)
             uint8_t fgc = cur_sb->fgcolors[cell_idx];
 
             if (fgc != cur_fgc) {
-                do {
-                    cmdlen = set_foreground_color_s(vt->seqlist + seqlen, vt->seqcap - seqlen, fgc);
-                    seqlen += cmdlen;
-
-                    if (cmdlen == 0 && !extend_seq_buf(vt)) {
-                        return -1;
-                    }
-                } while (cmdlen == 0);
+                VTR_RETRY_SEQUENCE(set_foreground_color_s(vt->seqlist + seqlen, vt->seqcap - seqlen, fgc));
             }
 
-            do {
-                cmdlen = draw_current_cell_s(vt->seqlist + seqlen, vt->seqcap - seqlen, bcell);
-                seqlen += cmdlen;
-
-                if (cmdlen == 0 && !extend_seq_buf(vt)) {
-                    return -1;
-                }
-            } while (cmdlen == 0);
+            VTR_RETRY_SEQUENCE(draw_current_cell_s(vt->seqlist + seqlen, vt->seqcap - seqlen, bcell));
 
             skip_cell = false;
             cur_fgc = fgc;
         }
     }
 
-    do {
-        cmdlen = set_foreground_color_s(vt->seqlist + seqlen, vt->seqcap - seqlen, VTR_COLOR_DEFAULT);
-        seqlen += cmdlen;
-
-        if (cmdlen == 0 && !extend_seq_buf(vt)) {
-            return -1;
-        }
-    } while (cmdlen == 0);
+    VTR_RETRY_SEQUENCE(set_foreground_color_s(vt->seqlist + seqlen, vt->seqcap - seqlen, VTR_COLOR_DEFAULT));
 
     if (sendseq(vt->fd, vt->seqlist, seqlen) != 0) {
         return -1;
@@ -523,6 +504,8 @@ int vtr_swap_buffers(struct vtr_canvas* vt)
     vt->cur_sb = prev_sb;
     memset(vt->cur_sb->buffer, 0, vt->nrows * vt->ncols);
     memset(vt->cur_sb->fgcolors, 0, vt->nrows * vt->ncols);
+
+    #undef VTR_RETRY_SEQUENCE
 
     return 0;
 }
