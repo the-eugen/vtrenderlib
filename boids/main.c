@@ -174,33 +174,15 @@ static inline int random_value_spread(int base, int spread)
 }
 
 // Implements small random changes to boid's heading after keeping the current heading for some time.
-static void wander(struct vt_boid* b, int dtime)
+static void wander(struct vt_boid* b, float dtime)
 {
-    b->cur_heading_time += dtime;
+    b->cur_heading_time += roundfe(dtime);
 
     if (b->cur_heading_time >= b->heading_change_delay) {
         b->cur_heading_time = 0;
         b->heading_change_delay = random_value_spread(VT_BOID_AVG_HEADING_DELAY_MS, VT_BOID_HEADING_DELAY_VARIATION_MS);
         b->desired_heading = b->heading + grad2rad(random_value_spread(0, VT_BOID_HEADING_CHANGE_LIMIT_DEG));
     }
-}
-
-// Update heading to be closer to the desired heading over dt.
-static float bank(struct vt_boid* b, int dtime)
-{
-    if (b->heading == b->desired_heading) {
-        return 0.0f;
-    }
-
-    float dheading = g_boid_radial_force * dtime / 1000;
-    float heading = b->heading;
-    if (fabsf(b->heading - b->desired_heading) <= dheading) {
-        b->heading = b->desired_heading;
-    } else {
-        b->heading += (b->desired_heading > b->heading ? dheading : -dheading);
-    }
-
-    return b->heading - heading;
 }
 
 static void draw_debug_vec(struct vec2f origin, struct vec2f vec, int len, enum vtr_color fgc)
@@ -248,7 +230,7 @@ static void update(double dtime)
         }
 
         if (total_neighbors == 0) {
-            wander(b, roundfe(dtime));
+            wander(b, dtime);
         } else {
             alignment = vec2f_unit(alignment);
 
@@ -267,11 +249,17 @@ static void update(double dtime)
             b->desired_heading = heading_angle(heading_vec);
         }
 
-        float dheading = bank(b, roundfe(dtime));
+        // Update heading to be closer to the desired heading over dt.
+        float dheading = g_boid_radial_force * dtime / 1000;
+        if (fabsf(b->heading - b->desired_heading) <= dheading) {
+            b->heading = b->desired_heading;
+        } else {
+            b->heading += (b->desired_heading > b->heading ? dheading : -dheading);
+        }
 
         b->p.x += VT_BOID_SPEED * cosf(b->heading) * dtime / 1000;
         b->p.y += VT_BOID_SPEED * sinf(b->heading) * dtime / 1000;
-        b->v = vec2f_rot(b->v, dheading);
+        b->v = heading_vec(b->heading);
         b->n = vec2f_normal(b->v);
 
         // Wrap over screen edges
