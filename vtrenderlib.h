@@ -105,6 +105,12 @@ void vtr_scan_linec(struct vtr_canvas* vt, int x0, int y0, int x1, int y1, enum 
 int vtr_trace_poly(struct vtr_canvas* vt, size_t nvertices, const struct vtr_vertex* vertexlist);
 int vtr_trace_polyc(struct vtr_canvas* vt, size_t nvertices, const struct vtr_vertex* vertexlist, enum vtr_color fgc);
 
+/**
+ * Print some text at the specified location.
+ * The text will overlay any other rasterized output.
+ */
+int vtr_print_text(struct vtr_canvas* vt, uint16_t row, uint16_t col, const char* str);
+
 #ifdef __cplusplus
 }
 #endif
