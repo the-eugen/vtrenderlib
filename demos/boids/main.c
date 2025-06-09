@@ -86,56 +86,83 @@ static inline float grad2rad(int grad)
     return M_PI * grad / 180;
 }
 
-static bool are_equalf(float a, float b)
+static inline bool are_equalf(float a, float b)
 {
     return fabsf(a - b) <= FLT_EPSILON;
 }
 
-static float roundfe(float v)
+static inline float roundfe(float v)
 {
     return roundf(v / FLT_EPSILON) * FLT_EPSILON;
 }
 
-static float heading_angle(struct vec2f v)
+static inline struct vec2f vec2f_make(float x, float y)
+{
+    return (struct vec2f){x, y};
+}
+
+static inline float heading_angle(struct vec2f v)
 {
     float hrad = atan2f(v.y, v.x);
     hrad = (hrad < 0 ? hrad + M_PI * 2 : hrad);
     return roundfe(hrad);
 }
 
-static struct vec2f heading_vec(float heading)
+static inline struct vec2f heading_vec(float heading)
 {
-    return (struct vec2f){roundfe(cosf(heading)), roundfe(sinf(heading))};
+    return vec2f_make(roundfe(cosf(heading)), roundfe(sinf(heading)));
 }
 
 static inline struct vec2f vec2f_add(struct vec2f a, struct vec2f b)
 {
-    return (struct vec2f){a.x + b.x, a.y + b.y};
+    return vec2f_make(a.x + b.x, a.y + b.y);
 }
 
 static inline struct vec2f vec2f_mul(struct vec2f a, float b)
 {
-    return (struct vec2f){a.x * b, a.y * b};
+    return vec2f_make(a.x * b, a.y * b);
 }
 
-static inline struct vec2f vec2f_mul_add(struct vec2f a, struct vec2f b, int scale)
+static inline struct vec2f vec2f_mul_add(struct vec2f a, struct vec2f b, float scale)
 {
-    return (struct vec2f){a.x + b.x * scale, a.y + b.y * scale};
+    return vec2f_make(a.x + b.x * scale, a.y + b.y * scale);
 }
 
 static inline struct vec2f vec2f_sub(struct vec2f a, struct vec2f b)
 {
-    return (struct vec2f){a.x - b.x, a.y - b.y};
+    return vec2f_make(a.x - b.x, a.y - b.y);
+}
+
+static inline float vec2f_length(struct vec2f v)
+{
+    return sqrtf(v.x * v.x + v.y * v.y);
+}
+
+static inline float vec2f_dot(struct vec2f a, struct vec2f b)
+{
+    return (a.x * b.x + a.y * b.y);
 }
 
 static inline struct vec2f vec2f_unit(struct vec2f v)
 {
-    float m = sqrtf(v.x * v.x + v.y * v.y);
+    float m = vec2f_length(v);
     if (m == 0) {
         return v;
     }
 
-    return (struct vec2f){v.x / m, v.y / m};
+    return vec2f_make(v.x / m, v.y / m);
+}
+
+static inline struct vec2f vec2f_clamp(struct vec2f v, float max)
+{
+    // If length-squared is under the limit-squared then the same is true for their sqrts,
+    // but we don't have to compute it then.
+    float len = v.x * v.x + v.y * v.y;
+    if (len <= max * max) {
+        return v;
+    }
+
+    return vec2f_mul(v, max / sqrt(len));
 }
 
 static inline struct vec2f vec2f_normal(struct vec2f v)
@@ -148,15 +175,18 @@ static inline struct vec2f vec2f_rot(struct vec2f v, double rad)
     float cs = cosf(rad);
     float sn = sinf(rad);
 
-    return (struct vec2f){
-        v.x * cs - v.y * sn,
-        v.x * sn + v.y * cs
-    };
+    return vec2f_make(v.x * cs - v.y * sn, v.x * sn + v.y * cs);
 }
 
 static inline float vec2f_dist_squared(struct vec2f a, struct vec2f b)
 {
     return (a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y);
+}
+
+static inline struct vec2f vec2f_lerp(struct vec2f a, struct vec2f b, float f)
+{
+    assert(f >= 0 && f <= 1.0);
+    return vec2f_make(a.x * (1.0 - f) + b.x * f, a.y * (1.0 - f) + b.y * f);
 }
 
 static inline struct vtr_vertex vec2f_project(struct vec2f v)
