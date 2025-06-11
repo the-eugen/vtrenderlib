@@ -1,32 +1,60 @@
 #pragma once
 
+/*
+ * vtrenderlib.h - tiny vector rasterizer for ANSI terminals.
+ *
+ * The library exposes a minimal API for drawing 2D primitives into a
+ * terminal emulator using braille characters.  The consumer is expected
+ * to manage the terminal file descriptor and drive the rendering loop.
+ */
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 struct vtr_canvas;
 
+/*
+ * Create a canvas object bound to an already opened TTY file descriptor.
+ * Returns NULL on error.
+ */
 struct vtr_canvas* vtr_canvas_create(int ttyfd);
+
+/*
+ * Put the associated terminal into raw mode and switch to the alternate
+ * screen buffer.  Must be called before any drawing takes place.
+ */
 int vtr_reset(struct vtr_canvas* vt);
+
+/*
+ * Restore the original terminal attributes and free all resources.
+ */
 void vtr_close(struct vtr_canvas* vt);
 
 /*
  * Resize support.
  *
- * The application is responsible for handling SIGWINCH.
- * A typical handler will call vtr_set_resize_pending
- * and the app's main event loop will vtr_resize synchroniously.
+ * Terminal resizes are handled asynchronously.  The consumer should
+ * watch for SIGWINCH and set the resize pending flag from the signal
+ * handler.  The actual resize is performed on the next call to
+ * vtr_resize() from the main loop.
  */
 
 void vtr_set_resize_pending(struct vtr_canvas* vt);
 bool vtr_is_resize_pending(const struct vtr_canvas* vt);
 int vtr_resize(struct vtr_canvas* vt);
 
+/* Canvas dimensions in dots */
 uint16_t vtr_xdots(struct vtr_canvas* vt);
 uint16_t vtr_ydots(struct vtr_canvas* vt);
 
+/* Clear the entire screen */
 int vtr_clear_screen(struct vtr_canvas* vt);
 
 /*
- * Swap buffers is called by the app when the current 2d frame is completed.
- * It collects all the changes accumulates since the last time vtr_swap_buffers was called
- * and applies them to the VT screen contents.
+ * Swap buffers when a frame is complete.  All accumulated changes are
+ * flushed to the terminal and the back buffer is cleared for the next
+ * frame.
  */
 
 int vtr_swap_buffers(struct vtr_canvas* vt);
@@ -35,12 +63,14 @@ int vtr_swap_buffers(struct vtr_canvas* vt);
  * Rasterizer calls.
  */
 
+/* Vertex in dot coordinates */
 struct vtr_vertex
 {
     int x;
     int y;
 };
 
+/* Basic ANSI color palette */
 enum vtr_color
 {
     VTR_COLOR_DEFAULT,
@@ -74,3 +104,7 @@ void vtr_scan_linec(struct vtr_canvas* vt, int x0, int y0, int x1, int y1, enum 
  */
 int vtr_trace_poly(struct vtr_canvas* vt, size_t nvertices, const struct vtr_vertex* vertexlist);
 int vtr_trace_polyc(struct vtr_canvas* vt, size_t nvertices, const struct vtr_vertex* vertexlist, enum vtr_color fgc);
+
+#ifdef __cplusplus
+}
+#endif
