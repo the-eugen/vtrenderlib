@@ -52,3 +52,10 @@ Mkfile.old
 dkms.conf
 build/
 CMakeFiles/
+
+# Demo binaries
+vt-boids
+vt-cliptest
+vt-cpuutil
+vt-loh
+vt-path
