@@ -58,7 +58,6 @@ vt-boids
 vt-cliptest
 vt-cpuutil
 vt-loh
-vt-path
 # CMake generated files
 CMakeCache.txt
 cmake_install.cmake
