@@ -32,16 +32,10 @@ int vtr_reset(struct vtr_canvas* vt);
 void vtr_close(struct vtr_canvas* vt);
 
 /*
- * Resize support.
- *
- * Terminal resizes are handled asynchronously.  The consumer should
- * watch for SIGWINCH and set the resize pending flag from the signal
- * handler.  The actual resize is performed on the next call to
- * vtr_resize() from the main loop.
+ * Check if VT dimensions have changed and reset it if needed.
+ * Terminal resizes are handled asynchronously. The consumer could
+ * watch for SIGWINCH and call the actual resize from the main loop.
  */
-
-void vtr_set_resize_pending(struct vtr_canvas* vt);
-bool vtr_is_resize_pending(const struct vtr_canvas* vt);
 int vtr_resize(struct vtr_canvas* vt);
 
 /* Canvas dimensions in dots */

@@ -139,7 +139,6 @@ struct vtr_canvas
 {
     int fd;
     struct termios origattrs;
-    bool resize_pending;
 
     // Canvas dimentions in char cells
     uint16_t nrows;
@@ -245,7 +244,6 @@ struct vtr_canvas* vtr_canvas_create(int ttyfd)
     vt->cur_sb = &vt->sb[0];
     vt->seqlist = seqlist;
     vt->seqcap = seqcap;
-    vt->resize_pending = false;
     memcpy(&vt->origattrs, &attrs, sizeof(attrs));
 
     return vt;
@@ -300,15 +298,15 @@ int vtr_reset(struct vtr_canvas* vt)
 
 int vtr_resize(struct vtr_canvas* vt)
 {
-    if (!vt->resize_pending) {
-        return 0;
-    }
-
     int error;
     struct winsize ws;
     error = ioctl(vt->fd, TIOCGWINSZ, &ws);
     if (error) {
         return error;
+    }
+
+    if (ws.ws_row == vt->nrows && ws.ws_col == vt->ncols) {
+        return 0;
     }
 
     struct vtr_stencil_buf sb1 = {0};
@@ -340,7 +338,6 @@ int vtr_resize(struct vtr_canvas* vt)
     vt->cur_sb = &vt->sb[0];
     vt->seqlist = seqlist;
     vt->seqcap = seqcap;
-    vt->resize_pending = false;
 
     vtr_clear_screen(vt);
 
@@ -353,16 +350,6 @@ error_out:
     free(seqlist);
 
     return -1;
-}
-
-void vtr_set_resize_pending(struct vtr_canvas* vt)
-{
-    vt->resize_pending = true;
-}
-
-bool vtr_is_resize_pending(const struct vtr_canvas* vt)
-{
-    return vt->resize_pending;
 }
 
 uint16_t vtr_xdots(struct vtr_canvas* vt)

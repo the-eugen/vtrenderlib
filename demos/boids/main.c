@@ -420,13 +420,9 @@ static void restore_tty_attrs(void)
 
 static void handle_signal(int signo)
 {
-    if (signo == SIGWINCH) {
-        vtr_set_resize_pending(g_vt);
-    } else {
-        restore_tty_attrs();
-        signal(signo, SIG_DFL);
-        raise(signo);
-    }
+    restore_tty_attrs();
+    signal(signo, SIG_DFL);
+    raise(signo);
 }
 
 static uint64_t clock_monotonic_ms(void)
@@ -484,7 +480,6 @@ int main(int argc, char** argv)
 
     atexit(restore_tty_attrs);
     signal(SIGINT, handle_signal);
-    signal(SIGWINCH, handle_signal);
 
     error = vtr_reset(g_vt);
     if (error) {
