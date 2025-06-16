@@ -15,7 +15,7 @@ extern "C" {
 struct vtr_canvas;
 
 /*
- * Create a canvas object bound to an already opened TTY file descriptor.
+ * Create a canvas object bound to an already-open TTY file descriptor.
  * Returns NULL on error.
  */
 struct vtr_canvas* vtr_canvas_create(int ttyfd);
@@ -87,20 +87,20 @@ enum vtr_color
 };
 
 /**
- * Render a dot at a given VT coordinates.
+ * Render a dot at given VT coordinates.
  */
 void vtr_render_dot(struct vtr_canvas* vt, int x, int y);
 void vtr_render_dotc(struct vtr_canvas* vt, int x, int y, enum vtr_color fgc);
 
 /**
- * Scan a line give 2 dot coordinates.
+ * Scan a line given two dot coordinates.
  */
 void vtr_scan_line(struct vtr_canvas* vt, int x0, int y0, int x1, int y1);
 void vtr_scan_linec(struct vtr_canvas* vt, int x0, int y0, int x1, int y1, enum vtr_color fgc);
 
 /**
- * Trace a polygon path given a list of verices.
- * Last vertex will be traced back to the first one and the resulting polygon filled.
+ * Trace a polygon path given a list of vertices.
+ * The last vertex is traced back to the first one and the resulting polygon filled.
  */
 int vtr_trace_poly(struct vtr_canvas* vt, size_t nvertices, const struct vtr_vertex* vertexlist);
 int vtr_trace_polyc(struct vtr_canvas* vt, size_t nvertices, const struct vtr_vertex* vertexlist, enum vtr_color fgc);
