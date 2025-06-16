@@ -88,10 +88,14 @@
 #include <limits.h>
 #include <math.h>
 
+#if defined(_LINUX_)
 #include <unistd.h>
 #include <termios.h>
 #include <sys/unistd.h>
 #include <sys/ioctl.h>
+#elif defined(_WIN32_)
+#include <windows.h>
+#endif
 
 #include "vtrenderlib.h"
 
@@ -137,8 +141,14 @@ struct vtr_stencil_buf
 
 struct vtr_canvas
 {
+#if defined(_LINUX_)
     int fd;
     struct termios origattrs;
+#else
+    HANDLE handle;
+    DWORD origmode;
+#endif
+
     bool resize_pending;
 
     // Canvas dimentions in char cells
@@ -200,6 +210,8 @@ static void free_stencil_buf(struct vtr_stencil_buf* sb)
     }
 }
 
+#ifdef _LINUX_
+
 struct vtr_canvas* vtr_canvas_create(int ttyfd)
 {
     int error = 0;
@@ -260,9 +272,9 @@ error_out:
     return NULL;
 }
 
-static int sendseq(int ttyfd, const char* seq, size_t nbytes)
+static int sendseq(struct vtr_canvas* vt, const char* seq, size_t nbytes)
 {
-    ssize_t res = write(ttyfd, seq, nbytes);
+    ssize_t res = write(vt->fd, seq, nbytes);
     if (res == -1 || res != nbytes) {
         return -1;
     }
@@ -290,10 +302,10 @@ int vtr_reset(struct vtr_canvas* vt)
     }
 
     // switch to alternate buffer, hide cursor and reset attributes
-    error |= sendseq(vt->fd, "\x1B[?1049h", 8);
-    error |= sendseq(vt->fd, "\x1B[?25l", 6);
-    error |= sendseq(vt->fd, "\x1B[2J", 4);
-    error |= sendseq(vt->fd, "\x1B[0m", 4);
+    error |= sendseq(vt, "\x1B[?1049h", 8);
+    error |= sendseq(vt, "\x1B[?25l", 6);
+    error |= sendseq(vt, "\x1B[2J", 4);
+    error |= sendseq(vt, "\x1B[0m", 4);
 
     return error;
 }
@@ -355,6 +367,189 @@ error_out:
     return -1;
 }
 
+void vtr_close(struct vtr_canvas* vt)
+{
+    tcsetattr(vt->fd, TCSANOW, &vt->origattrs);
+    free_stencil_buf(&vt->sb[0]);
+    free_stencil_buf(&vt->sb[1]);
+    free(vt->seqlist);
+
+    // switch back to main buffer and restore cursor
+    (void) sendseq(vt, "\x1B[?1049l", 8);
+    (void) sendseq(vt, "\x1B[?25h", 6);
+
+    free(vt);
+}
+
+#else
+
+struct vtr_canvas* vtr_canvas_create(HANDLE handle)
+{
+    int error = 0;
+
+    CONSOLE_SCREEN_BUFFER_INFO csbi;
+    if (!GetConsoleScreenBufferInfo(handle, &csbi)) {
+        return NULL;
+    }
+
+    uint16_t rows = csbi.dwSize.Y;
+    uint16_t cols = csbi.dwSize.X;
+
+    struct vtr_canvas* vt = malloc(sizeof(*vt));
+    if (!vt) {
+        return NULL;
+    }
+
+    struct vtr_stencil_buf sb1 = {0};
+    struct vtr_stencil_buf sb2 = {0};
+    char* seqlist = NULL;
+
+    if (0 != create_stencil_buf(&sb1, rows, cols) || 0 != create_stencil_buf(&sb2, rows, cols)) {
+        goto error_out;
+    }
+
+    size_t seqcap = VT_SEQLIST_BUFFER_SIZE(rows, cols);
+    seqlist = malloc(seqcap);
+    if (!seqlist) {
+        goto error_out;
+    }
+
+    vt->handle = handle;
+    vt->nrows = rows;
+    vt->ncols = cols;
+    vt->ydots = rows * VT_CELL_YDOTS;
+    vt->xdots = cols * VT_CELL_XDOTS;
+    vt->sb[0] = sb1;
+    vt->sb[1] = sb2;
+    vt->cur_sb = &vt->sb[0];
+    vt->seqlist = seqlist;
+    vt->seqcap = seqcap;
+    vt->resize_pending = false;
+
+    return vt;
+
+error_out:
+
+    free_stencil_buf(&sb1);
+    free_stencil_buf(&sb2);
+    free(seqlist);
+    free(vt);
+
+    return NULL;
+}
+
+static int sendseq(struct vtr_canvas* vt, const char* seq, size_t nbytes)
+{
+    DWORD nwritten;
+    if (!WriteFile(vt->handle, seq, (DWORD)nbytes, &nwritten, NULL) || nwritten != nbytes) {
+        return -1;
+    }
+
+    return 0;
+}
+
+int vtr_reset(struct vtr_canvas* vt)
+{
+    DWORD mode;
+    if (!GetConsoleMode(vt->handle, &mode)) {
+        return -1;
+    }
+
+    vt->origmode = mode;
+
+    mode &= ~(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT);
+    mode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+    mode |= ENABLE_PROCESSED_INPUT;
+    mode |= DISABLE_NEWLINE_AUTO_RETURN;
+
+    if (!SetConsoleMode(vt->handle, mode)) {
+        return -1;
+    }
+
+    // switch to alternate buffer, hide cursor and reset attributes
+    int error = 0;
+    error |= sendseq(vt, "\x1B[?1049h", 8);
+    error |= sendseq(vt, "\x1B[?25l", 6);
+    error |= sendseq(vt, "\x1B[2J", 4);
+    error |= sendseq(vt, "\x1B[0m", 4);
+
+    return error;
+}
+
+int vtr_resize(struct vtr_canvas* vt)
+{
+    if (!vt->resize_pending) {
+        return 0;
+    }
+
+    CONSOLE_SCREEN_BUFFER_INFO csbi;
+    if (!GetConsoleScreenBufferInfo(vt->handle, &csbi)) {
+        return -1;
+    }
+
+    uint16_t rows = csbi.dwSize.Y;
+    uint16_t cols = csbi.dwSize.X;
+
+    struct vtr_stencil_buf sb1 = {0};
+    struct vtr_stencil_buf sb2 = {0};
+    char* seqlist = NULL;
+
+    if (0 != create_stencil_buf(&sb1, rows, cols) || 0 != create_stencil_buf(&sb2, rows, cols)) {
+        goto error_out;
+    }
+
+    size_t seqcap = VT_SEQLIST_BUFFER_SIZE(rows, cols);
+    seqlist = malloc(seqcap);
+    if (!seqlist) {
+        goto error_out;
+    }
+
+    // No use keeping the previous buffer contents since those
+    // are invalid in the new dimentions anyway.
+    free_stencil_buf(&vt->sb[0]);
+    free_stencil_buf(&vt->sb[1]);
+    free(vt->seqlist);
+
+    vt->nrows = rows;
+    vt->ncols = cols;
+    vt->ydots = rows * VT_CELL_YDOTS;
+    vt->xdots = cols * VT_CELL_XDOTS;
+    vt->sb[0] = sb1;
+    vt->sb[1] = sb2;
+    vt->cur_sb = &vt->sb[0];
+    vt->seqlist = seqlist;
+    vt->seqcap = seqcap;
+    vt->resize_pending = false;
+
+    vtr_clear_screen(vt);
+
+    return 0;
+
+error_out:
+
+    free_stencil_buf(&sb1);
+    free_stencil_buf(&sb2);
+    free(seqlist);
+
+    return -1;
+}
+
+void vtr_close(struct vtr_canvas* vt)
+{
+    SetConsoleMode(vt->handle, vt->origmode);
+    free_stencil_buf(&vt->sb[0]);
+    free_stencil_buf(&vt->sb[1]);
+    free(vt->seqlist);
+
+    // switch back to main buffer and restore cursor
+    (void) sendseq(vt, "\x1B[?1049l", 8);
+    (void) sendseq(vt, "\x1B[?25h", 6);
+
+    free(vt);
+}
+
+#endif
+
 void vtr_set_resize_pending(struct vtr_canvas* vt)
 {
     vt->resize_pending = true;
@@ -375,29 +570,13 @@ uint16_t vtr_ydots(struct vtr_canvas* vt)
     return vt->ydots;
 }
     
-void vtr_close(struct vtr_canvas* vt)
-{
-    tcsetattr(vt->fd, TCSANOW, &vt->origattrs);
-    free_stencil_buf(&vt->sb[0]);
-    free_stencil_buf(&vt->sb[1]);
-    free(vt->seqlist);
-
-    // switch back to main buffer and restore cursor
-    (void) sendseq(vt->fd, "\x1B[?1049l", 8);
-    (void) sendseq(vt->fd, "\x1B[?25h", 6);
-
-    free(vt);
-}
-
 int vtr_clear_screen(struct vtr_canvas* vt)
 {
-    return sendseq(vt->fd, "\x1B[2J", 4);
+    return sendseq(vt, "\x1B[2J", 4);
 }
 
 static char* extend_seq_buf(struct vtr_canvas* vt)
 {
-    DBG_LOG("Ran out of sequence list capacity %zu\n", vt->seqcap);
-
     vt->seqcap <<= 1;
     assert(vt->seqcap > 0);
 
@@ -527,7 +706,7 @@ int vtr_swap_buffers(struct vtr_canvas* vt)
     memset(prev_sb->textoverlay, 0, vt->nrows * vt->ncols);
     vt->cur_sb = prev_sb;
 
-    return sendseq(vt->fd, vt->seqlist, seqlen);
+    return sendseq(vt, vt->seqlist, seqlen);
 }
 
 static void render_dot(struct vtr_stencil_buf* sb, uint16_t x, uint16_t y, enum vtr_color fgc)

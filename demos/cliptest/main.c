@@ -2,9 +2,15 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <math.h>
-#include <signal.h>
+
+#ifdef _LINUX_
 #include <unistd.h>
+#include <signal.h>
+#else
+#include <windows.h>
+#endif
 
 #include <vtrenderlib.h>
 
@@ -15,6 +21,7 @@ static void restore_tty_attrs(void)
     vtr_close(g_vt);
 }
 
+#ifdef _LINUX_
 static void handle_signal(int signo)
 {
     if (signo == SIGWINCH) {
@@ -25,24 +32,40 @@ static void handle_signal(int signo)
         raise(signo);
     }
 }
+#endif
+
+#ifdef _WIN32_
+static void usleep(unsigned long long us)
+{
+    Sleep(us / 1000);
+}
+#endif
 
 int main(void)
 {
     int error;
 
+#ifdef _LINUX_
     g_vt = vtr_canvas_create(STDOUT_FILENO);
+    signal(SIGINT, handle_signal);
+    signal(SIGWINCH, handle_signal);
+#else
+    SetConsoleOutputCP(CP_UTF8);
+    g_vt = vtr_canvas_create(GetStdHandle(STD_OUTPUT_HANDLE));
+#endif
+
     if (!g_vt) {
         exit(EXIT_FAILURE);
     }
 
-    atexit(restore_tty_attrs);
-    signal(SIGINT, handle_signal);
-    signal(SIGWINCH, handle_signal);
-
     error = vtr_reset(g_vt);
     if (error) {
+        fprintf(stderr, "vtr_reset: %d\n", error);
         exit(error);
     }
+
+    atexit(restore_tty_attrs);
+
 
     // Dots clipped
     {
@@ -52,27 +75,9 @@ int main(void)
         usleep(1000000 / 60);
     }
 
-    // Move a triangle across the screen
-    for (int y = 0; y < vtr_ydots(g_vt) + 10; y += 1) {
-        struct vtr_vertex v3[] = {
-            {50, y - 10},
-            {45, y},
-            {55, y},
-        };
-
-        vtr_trace_poly(g_vt, 3, v3);
-        vtr_swap_buffers(g_vt);
-        usleep(1000000 / 60);
-    }
-
-    for (int x = 0; x < vtr_xdots(g_vt) + 10; x += 1) {
-        struct vtr_vertex v3[] = {
-            {x - 10, 50},
-            {x, 45},
-            {x, 55},
-        };
-
-        vtr_trace_poly(g_vt, 3, v3);
+    // Move a horizontal line across the canvas and clip it
+    for (int y = -1; y <= vtr_ydots(g_vt); y += 1) {
+        vtr_scan_line(g_vt, -1, y, vtr_xdots(g_vt), y);
         vtr_swap_buffers(g_vt);
         usleep(1000000 / 60);
     }
@@ -80,13 +85,6 @@ int main(void)
     // Move a vertical line across the canvas and clip it
     for (int x = -1; x <= vtr_xdots(g_vt); x += 1) {
         vtr_scan_line(g_vt, x, -1, x, vtr_ydots(g_vt));
-        vtr_swap_buffers(g_vt);
-        usleep(1000000 / 60);
-    }
-
-    // Move a horizontal line across the canvas and clip it
-    for (int y = -1; y <= vtr_ydots(g_vt); y += 1) {
-        vtr_scan_line(g_vt, -1, y, vtr_xdots(g_vt), y);
         vtr_swap_buffers(g_vt);
         usleep(1000000 / 60);
     }
@@ -112,6 +110,31 @@ int main(void)
             vtr_swap_buffers(g_vt);
             usleep(1000000 / 60);
         }
+    }
+
+    // Move a triangle across the screen
+    for (int y = 0; y < vtr_ydots(g_vt) + 10; y += 1) {
+        struct vtr_vertex v3[] = {
+            {50, y - 10},
+            {45, y},
+            {55, y},
+        };
+
+        vtr_trace_poly(g_vt, 3, v3);
+        vtr_swap_buffers(g_vt);
+        usleep(1000000 / 60);
+    }
+
+    for (int x = 0; x < vtr_xdots(g_vt) + 10; x += 1) {
+        struct vtr_vertex v3[] = {
+            {x - 10, 50},
+            {x, 45},
+            {x, 55},
+        };
+
+        vtr_trace_poly(g_vt, 3, v3);
+        vtr_swap_buffers(g_vt);
+        usleep(1000000 / 60);
     }
 
     return 0;

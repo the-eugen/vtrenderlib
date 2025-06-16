@@ -9,8 +9,12 @@
 #include <time.h>
 #include <errno.h>
 
+#ifdef _LINUX_
 #include <signal.h>
 #include <unistd.h>
+#else
+#include <windows.h>
+#endif
 
 #include <vtrenderlib.h>
 
@@ -418,6 +422,7 @@ static void restore_tty_attrs(void)
     vtr_close(g_vt);
 }
 
+#ifdef _LINUX_
 static void handle_signal(int signo)
 {
     if (signo == SIGWINCH) {
@@ -437,6 +442,24 @@ static uint64_t clock_monotonic_ms(void)
     return ((uint64_t)t.tv_sec * 1000000000 + t.tv_nsec) / 1000000;
 }
 
+#else
+
+static void usleep(unsigned long long us)
+{
+    Sleep(us / 1000);
+}
+
+static uint64_t clock_monotonic_ms(void)
+{
+    LARGE_INTEGER freq, counter;
+    QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&counter);
+
+    return (uint64_t)(counter.QuadPart * 1000000000LL / freq.QuadPart) / 1000000;
+}
+
+#endif
+
 void print_help(const char *progname)
 {
     printf("Usage: %s [options]\n", progname);
@@ -452,6 +475,7 @@ int main(int argc, char** argv)
     int error;
     int opt;
 
+#ifdef _LINUX_
     while ((opt = getopt(argc, argv, "dn:ch")) != -1) {
         switch (opt) {
         case 'd':
@@ -478,13 +502,19 @@ int main(int argc, char** argv)
     }
 
     g_vt = vtr_canvas_create(STDOUT_FILENO);
+    signal(SIGINT, handle_signal);
+    signal(SIGWINCH, handle_signal);
+#else
+    g_opt_colors = true;
+    g_opt_nboids = 32;
+    SetConsoleOutputCP(CP_UTF8);
+    g_vt = vtr_canvas_create(GetStdHandle(STD_OUTPUT_HANDLE));
+#endif
     if (!g_vt) {
         exit(EXIT_FAILURE);
     }
 
     atexit(restore_tty_attrs);
-    signal(SIGINT, handle_signal);
-    signal(SIGWINCH, handle_signal);
 
     error = vtr_reset(g_vt);
     if (error) {

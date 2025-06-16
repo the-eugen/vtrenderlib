@@ -18,7 +18,11 @@ struct vtr_canvas;
  * Create a canvas object bound to an already-open TTY file descriptor.
  * Returns NULL on error.
  */
+#ifdef _LINUX_
 struct vtr_canvas* vtr_canvas_create(int ttyfd);
+#else
+struct vtr_canvas* vtr_canvas_create(HANDLE handle);
+#endif
 
 /*
  * Put the associated terminal into raw mode and switch to the alternate

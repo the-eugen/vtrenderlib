@@ -1,8 +1,13 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdbool.h>
-#include <signal.h>
+
+#ifdef _LINUX_
 #include <unistd.h>
+#include <signal.h>
+#else
+#include <windows.h>
+#endif
 
 #include <vtrenderlib.h>
 
@@ -13,6 +18,7 @@ static void restore_tty_attrs(void)
     vtr_close(g_vt);
 }
 
+#ifdef _LINUX_
 static void handle_signal(int signo)
 {
     if (signo == SIGWINCH) {
@@ -23,19 +29,32 @@ static void handle_signal(int signo)
         raise(signo);
     }
 }
+#endif
+
+#ifdef _WIN32_
+static void usleep(unsigned long long us)
+{
+    Sleep(us / 1000);
+}
+#endif
 
 int main(void)
 {
     int error;
 
+#ifdef _LINUX_
     g_vt = vtr_canvas_create(STDOUT_FILENO);
+    signal(SIGINT, handle_signal);
+    signal(SIGWINCH, handle_signal);
+#else
+    SetConsoleOutputCP(CP_UTF8);
+    g_vt = vtr_canvas_create(GetStdHandle(STD_OUTPUT_HANDLE));
+#endif
     if (!g_vt) {
         exit(EXIT_FAILURE);
     }
 
     atexit(restore_tty_attrs);
-    signal(SIGINT, handle_signal);
-    signal(SIGWINCH, handle_signal);
 
     error = vtr_reset(g_vt);
     if (error) {
