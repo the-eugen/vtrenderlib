@@ -18,8 +18,8 @@
 // - VT/xterm escape sequences work in the same manner:
 //   1. Shell/app: 0x1B 0x5B 0x33 0x31 0x6D   # ESC [ 3 1 m  → “set foreground color to red” -> written to PTY slave via STDOUT_FILENO
 //   2. Kernel PTY layer: handles line discipline, raw mode (bytes pass through unchanged) vs canonical mode (control chars handled),
-//      forwards data to PTY slave.
-//   3. Terminal emulator: reads data from PTY slave, recognizes `ESC [ 31 m`, changes rendering color, paints to the screen.
+//      forwards data to PTY master.
+//   3. Terminal emulator: reads data from PTY master, recognizes `ESC [ 31 m`, changes rendering color, paints to the screen.
 //
 
 //
