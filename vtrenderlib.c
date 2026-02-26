@@ -761,7 +761,9 @@ int vtr_trace_polyc(struct vtr_canvas* vt, size_t nvertices, const struct vtr_ve
                 // Intercepts can repeat if 2 edges meet at current y, ignore that
                 switch(ncepts) {
                     case 2: if (xcepts[1] == xcept) continue;
+                            /* fallthrough */
                     case 1: if (xcepts[0] == xcept) continue;
+                            /* fallthrough */
                     case 0: break;
                 }
 
