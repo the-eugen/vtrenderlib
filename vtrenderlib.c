@@ -261,7 +261,7 @@ error_out:
 static int sendseq(int ttyfd, const char* seq, size_t nbytes)
 {
     ssize_t res = write(ttyfd, seq, nbytes);
-    if (res == -1 || res != nbytes) {
+    if (res == -1 || (size_t)res != nbytes) {
         return -1;
     }
 
