@@ -96,7 +96,7 @@ struct vt_boid
     int cur_heading_time;
 
     // rendering data
-    enum vtr_color color;
+    vtr_fgcolor_t color;
     struct vec2f trail[VT_BOID_TRAIL_SIZE];
     size_t trail_idx;
     size_t trail_len;
@@ -241,7 +241,7 @@ static void debug_print(uint16_t row, uint16_t col, const char* fmt, ...)
     va_end(args);
 }
 
-static void debug_vec(struct vec2f origin, struct vec2f vec, float scale, enum vtr_color fgc)
+static void debug_vec(struct vec2f origin, struct vec2f vec, float scale, vtr_fgcolor_t fgc)
 {
     struct vtr_vertex start = vec2f_project(origin);
     struct vtr_vertex end = vec2f_project(vec2f_mul_add(origin, vec, scale));

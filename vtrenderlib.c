@@ -121,10 +121,13 @@
 #define VT_CELL_YDOTS ((uint16_t)4)
 #define VT_CELL_XDOTS ((uint16_t)2)
 
-// We preallocate enough space to hold the biggest number of draw calls (3 + 6 colored bytes per escape seq)
+// We preallocate enough space to hold the biggest number of draw calls (3 + 11 colored bytes per escape seq)
 // plus some slack to hold a cursor reset commands.
 #define VT_MIN_SEQLIST_SLACK                ((size_t)64)
-#define VT_SEQLIST_BUFFER_SIZE(rows, cols)  MAX((size_t)((rows + 1) * cols + 1) * 9, VT_MIN_SEQLIST_SLACK)
+#define VT_COLOR_SEQ_MAXLEN                 ((size_t)11)
+#define VT_DRAW_SEQ_LEN                     ((size_t)3)
+#define VT_CELL_SEQS_MAX                    (VT_COLOR_SEQ_MAXLEN + VT_DRAW_SEQ_LEN)
+#define VT_SEQLIST_BUFFER_SIZE(rows, cols)  MAX((size_t)((rows + 1) * cols + 1) * VT_CELL_SEQS_MAX, VT_MIN_SEQLIST_SLACK)
 
 struct vtr_stencil_buf
 {
@@ -417,18 +420,40 @@ static size_t draw_cell_s(char* seq, __attribute__((unused)) size_t seqcap, uint
     return 3;
 }
 
+static size_t u8_to_dec(char* dst, uint8_t v)
+{
+    if (v >= 100) {
+        dst[0] = '0' + v / 100;
+        dst[1] = '0' + (v / 10) % 10;
+        dst[2] = '0' + v % 10;
+        return 3;
+    }
+    if (v >= 10) {
+        dst[0] = '0' + v / 10;
+        dst[1] = '0' + v % 10;
+        return 2;
+    }
+    dst[0] = '0' + v;
+    return 1;
+}
+
 static size_t set_foreground_color_s(char* seq, __attribute__((unused)) size_t seqcap, uint8_t fgc)
 {
-    assert(fgc >= VTR_COLOR_DEFAULT && fgc < VTR_COLOR_TOTAL);
-    assert(seqcap >= 5);
+    assert(seqcap >= VT_COLOR_SEQ_MAXLEN);
 
-    seq[0] = 0x1b;
-    seq[1] = '[';
-    seq[2] = '3';
-    seq[3] = (fgc == VTR_COLOR_DEFAULT ? '9' : '0' + fgc - 1);
-    seq[4] = 'm';
+    if (fgc == VTR_COLOR_DEFAULT) {
+        memcpy(seq, "\x1b[39m", 5);
+        return 5;
+    }
+    const char fgc256[] = "\x1b[38;5;";
+    size_t fgc256_len = sizeof(fgc256) - 1;
 
-    return 5;
+    memcpy(seq, fgc256, fgc256_len);
+    size_t n = u8_to_dec(&seq[fgc256_len], fgc - 1);
+    seq[fgc256_len + n] = 'm';
+
+    assert(fgc256_len + n + 1 <= VT_COLOR_SEQ_MAXLEN);
+    return fgc256_len + n + 1;
 }
 
 static size_t put_char_s(char* seq, __attribute__((unused)) size_t seqcap, char chr)
@@ -517,7 +542,7 @@ int vtr_swap_buffers(struct vtr_canvas* vt)
     return sendseq(vt->fd, vt->seqlist, seqlen);
 }
 
-static void render_dot(struct vtr_stencil_buf* sb, uint16_t x, uint16_t y, enum vtr_color fgc)
+static void render_dot(struct vtr_stencil_buf* sb, uint16_t x, uint16_t y, vtr_fgcolor_t fgc)
 {
     assert(x < sb->xdots && y < sb->ydots);
 
@@ -546,7 +571,7 @@ void vtr_render_dot(struct vtr_canvas* vt, int x, int y)
     vtr_render_dotc(vt, x, y, VTR_COLOR_DEFAULT);
 }
 
-void vtr_render_dotc(struct vtr_canvas* vt, int x, int y, enum vtr_color fgc)
+void vtr_render_dotc(struct vtr_canvas* vt, int x, int y, vtr_fgcolor_t fgc)
 {
     if (point_test(vt, x, y)) {
         render_dot(vt->cur_sb, x, y, fgc);
@@ -562,7 +587,7 @@ static float calc_slope(uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1)
     return (x1 == x0 ? INFINITY : ((float)y1 - y0) / ((float)x1 - x0));
 }
 
-static void scan_line(struct vtr_stencil_buf* sb, uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1, enum vtr_color fgc)
+static void scan_line(struct vtr_stencil_buf* sb, uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1, vtr_fgcolor_t fgc)
 {
     assert(x0 < sb->xdots);
     assert(x1 < sb->xdots);
@@ -637,7 +662,7 @@ void vtr_scan_line(struct vtr_canvas* vt, int x0, int y0, int x1, int y1)
     vtr_scan_linec(vt, x0, y0, x1, y1, VTR_COLOR_DEFAULT);
 }
 
-void vtr_scan_linec(struct vtr_canvas* vt, int x0, int y0, int x1, int y1, enum vtr_color fgc)
+void vtr_scan_linec(struct vtr_canvas* vt, int x0, int y0, int x1, int y1, vtr_fgcolor_t fgc)
 {
     int dx = x1 - x0, dy = y1 - y0;
     int xmin = 0, ymin = 0;
@@ -688,7 +713,7 @@ int vtr_trace_poly(struct vtr_canvas* vt, size_t nvertices, const struct vtr_ver
     return vtr_trace_polyc(vt, nvertices, vlist, VTR_COLOR_DEFAULT);
 }
 
-int vtr_trace_polyc(struct vtr_canvas* vt, size_t nvertices, const struct vtr_vertex* vlist, enum vtr_color fgc)
+int vtr_trace_polyc(struct vtr_canvas* vt, size_t nvertices, const struct vtr_vertex* vlist, vtr_fgcolor_t fgc)
 {
     assert(vt);
     assert(vlist);
