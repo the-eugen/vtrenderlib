@@ -564,10 +564,10 @@ static float calc_slope(uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1)
 
 static void scan_line(struct vtr_stencil_buf* sb, uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1, enum vtr_color fgc)
 {
-    assert(x0 >= 0 && x0 < sb->xdots);
-    assert(x1 >= 0 && x1 < sb->xdots);
-    assert(y0 >= 0 && y0 < sb->ydots);
-    assert(y1 >= 0 && y1 < sb->ydots);
+    assert(x0 < sb->xdots);
+    assert(x1 < sb->xdots);
+    assert(y0 < sb->ydots);
+    assert(y1 < sb->ydots);
 
     float m = calc_slope(x0, y0, x1, y1);
     int hdir = (x0 < x1 ? 1 : -1);
