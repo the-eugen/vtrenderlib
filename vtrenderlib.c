@@ -406,7 +406,7 @@ static size_t set_pos_s(char* seq, size_t seqcap, uint16_t row, uint16_t col)
     return nwritten;
 }
 
-static size_t draw_cell_s(char* seq, size_t seqcap, uint8_t mask)
+static size_t draw_cell_s(char* seq, __attribute__((unused)) size_t seqcap, uint8_t mask)
 {
     assert(seqcap >= 3);
 
@@ -417,7 +417,7 @@ static size_t draw_cell_s(char* seq, size_t seqcap, uint8_t mask)
     return 3;
 }
 
-static size_t set_foreground_color_s(char* seq, size_t seqcap, uint8_t fgc)
+static size_t set_foreground_color_s(char* seq, __attribute__((unused)) size_t seqcap, uint8_t fgc)
 {
     assert(fgc >= VTR_COLOR_DEFAULT && fgc < VTR_COLOR_TOTAL);
     assert(seqcap >= 5);
@@ -431,7 +431,7 @@ static size_t set_foreground_color_s(char* seq, size_t seqcap, uint8_t fgc)
     return 5;
 }
 
-static size_t put_char_s(char* seq, size_t seqcap, char chr)
+static size_t put_char_s(char* seq, __attribute__((unused)) size_t seqcap, char chr)
 {
     assert(seqcap >= 1);
     seq[0] = chr;
