@@ -77,27 +77,38 @@ enum vtr_color
     VTR_COLOR_CYAN,
     VTR_COLOR_WHITE,
 
-    VTR_COLOR_TOTAL // always last
+    VTR_COLOR_SGR8_TOTAL // always last
 };
+
+/*
+ * Foreground color type. Accepts enum vtr_color or VTR_COLOR256(idx) values.
+ */
+typedef uint8_t vtr_fgcolor_t;
+
+/*
+ * 256-color palette (ITU-T T.416 / ISO/IEC 8613-6).
+ * Index 255 (light grey) is mapped to VTR_COLOR_WHITE since 0 is reserved for VTR_COLOR_DEFAULT.
+ */
+#define VTR_COLOR256(_idx)  ((vtr_fgcolor_t)((_idx) >= 255 ? VTR_COLOR_WHITE : (_idx) + 1))
 
 /**
  * Render a dot at given VT coordinates.
  */
 void vtr_render_dot(struct vtr_canvas* vt, int x, int y);
-void vtr_render_dotc(struct vtr_canvas* vt, int x, int y, enum vtr_color fgc);
+void vtr_render_dotc(struct vtr_canvas* vt, int x, int y, vtr_fgcolor_t fgc);
 
 /**
  * Scan a line given two dot coordinates.
  */
 void vtr_scan_line(struct vtr_canvas* vt, int x0, int y0, int x1, int y1);
-void vtr_scan_linec(struct vtr_canvas* vt, int x0, int y0, int x1, int y1, enum vtr_color fgc);
+void vtr_scan_linec(struct vtr_canvas* vt, int x0, int y0, int x1, int y1, vtr_fgcolor_t fgc);
 
 /**
  * Trace a polygon path given a list of vertices.
  * The last vertex is traced back to the first one and the resulting polygon filled.
  */
 int vtr_trace_poly(struct vtr_canvas* vt, size_t nvertices, const struct vtr_vertex* vertexlist);
-int vtr_trace_polyc(struct vtr_canvas* vt, size_t nvertices, const struct vtr_vertex* vertexlist, enum vtr_color fgc);
+int vtr_trace_polyc(struct vtr_canvas* vt, size_t nvertices, const struct vtr_vertex* vertexlist, vtr_fgcolor_t fgc);
 
 /**
  * Print some text at the specified location.
